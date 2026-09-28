@@ -1,6 +1,6 @@
 # web-perf-lab
 
-面向 **Chrome DevTools** 的实战演练场。14 个场景，每个都有**问题版 / 优化版**
+面向 **Chrome DevTools** 的实战演练场。15 个场景，每个都有**问题版 / 优化版**
 两个独立页面 —— 开两个标签页并排对比 Network 和 Performance 面板。
 
 ## 快速开始
@@ -51,6 +51,36 @@
 | **动态 JS 替换** | Sources → Overrides（Local Overrides），改线上 JS 即时生效、刷新保留 |
 | **断点全家桶** | 条件断点、日志点、DOM 断点、Fetch 断点、事件监听断点、Blackboxing |
 
+### Lighthouse 综合评分（1 个）
+
+| 场景 | 练什么 |
+|---|---|
+| 综合评分对照 | **整合测试** —— 一次踩满四类审计，看前面学的东西怎么互相影响 |
+
+前面 14 个场景各练**一个**技术点，Lighthouse 是**综合评分**：
+它把几十项审计加权算成 Performance / Accessibility / Best Practices / SEO
+四个分数，正好用来验证你是不是真的把前面那些点串起来了。
+
+问题版故意踩的坑（每一项都对应报告里一个具体审计条目）：
+
+| 分类 | 故意制造的失败 |
+|---|---|
+| Performance | 渲染阻塞 script + 45KB 无用 CSS + 60KB 死代码 JS + 2.4MB 未优化首屏图 + 无缓存头 + 1200 个冗余 DOM 节点 |
+| Accessibility | 无 `lang`、图片无 `alt`、表单无 `label`、按钮无名称、标题跳级、对比度 3.3:1、字号 10px、链接文字无意义 |
+| Best Practices | console 报错、使用已废弃 API、图片显示比例与固有比例不符 |
+| SEO | 无 meta description、链接不可爬取 |
+
+**这个场景的页面形态和前面不同**：bad/good 是**干净的被测页面**，
+不带侧边观察清单 —— 清单本身会塞 DOM 节点、加文本、可能引入对比度问题，
+**会污染 Lighthouse 的评分**。所以指南单独放在 `/lighthouse/guide`，
+页面右下角有个小浮层跳过去。
+
+跑法：`F12` → **Lighthouse** 标签 → 勾四个分类 → Analyze page load。
+**务必用无痕窗口**（扩展会拖慢加载，分数失真），同一个页面多跑几次取中位数。
+
+> 具体分数取决于机器负载，以实测为准。但这个差距一定存在：
+> 问题版 Performance 会低于 50，优化版应该到 90+。
+
 ## 每个场景页的结构
 
 ```
@@ -88,15 +118,37 @@
 
 | 路径 | 用途 |
 |---|---|
-| `/{network\|performance\|debug}/<场景>/<bad\|good>` | 场景页 |
+| `/{network\|performance\|debug\|lighthouse}/<场景>/<bad\|good>` | 场景页 |
 | `/assets/{nocache\|cached\|etag}/{文件}` | 三种缓存策略对照 |
 | `/assets/{nogzip\|gzip}/{文件}` | 压缩对照（300KB 脚本） |
+| `/assets/lh/theme-bad.css?kb=N` | 动态生成的"大块未使用 CSS"（默认 45KB） |
+| `/assets/lh/app-bad.js?kb=N` | 动态生成的"大块死代码 JS"（默认 60KB） |
+| `/assets/lh/block-bad.js?ms=N` | 渲染阻塞 + 长任务脚本 |
 | `/api/slow?ms=N` | 延迟响应（拖 TTFB） |
 | `/api/chain?n=N` | N 次重定向 |
 | `/api/item/:id` | 300ms 延迟的小 JSON（瀑布流用） |
 | `/api/cors/simple` | 简单请求（不触发预检） |
 | `/api/cors/preflight` | 带自定义头（触发预检） |
 | `/api/image?w=&h=&noise=1` | 动态生成 PNG |
+
+### 路由的返回值约定（踩过坑）
+
+`serveAssetVariant` / `serveLighthouseAsset` / `serveScenario` 三个函数
+**处理了就返回 `true`，没匹配上返回 `false`**。调用方是：
+
+```js
+if (serveAssetVariant(req, res, p)) return;
+if (serveLighthouseAsset(req, res, p)) return;
+if (serveScenario(res, p)) return;
+// 都没匹配上 → 走静态兜底
+```
+
+加 Lighthouse 时踩过一次：写成 `return send(res, 200, ...)` ——
+`send()` 没有返回值，函数返回 `undefined`，调用方判断为假，
+于是继续往下走到静态兜底**又发了一次响应**，
+触发 `ERR_HTTP_HEADERS_SENT`，**整个 Node 进程直接退出**。
+
+`send()` 里现在有一道 `res.headersSent` 兜底，但根本解法是**遵守返回值约定**。
 
 ### 为什么图片是动态生成的
 

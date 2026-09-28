@@ -43,7 +43,7 @@ cd jvm-lab
 
 ## web-perf-lab
 
-面向 Chrome DevTools 的实战演练场。**14 个场景，每个都有问题版 / 优化版两个独立页面**，
+面向 Chrome DevTools 的实战演练场。**15 个场景，每个都有问题版 / 优化版两个独立页面**，
 可以开两个标签页并排对比 Network 和 Performance 面板。
 
 每个场景页左侧都有一份「**观察清单**」：在哪个面板、点哪里、应该看到什么、
@@ -57,6 +57,9 @@ cd jvm-lab
 
 **JS 调试（2 个）**：动态 JS 替换（Local Overrides）、断点全家桶
 （条件断点 / 日志点 / DOM 断点 / Fetch 断点 / 事件监听断点 / Blackboxing）
+
+**Lighthouse 综合评分（1 个）**：整合测试 —— 一次踩满 Performance /
+Accessibility / Best Practices / SEO 四类审计，看前面学的点怎么互相影响。
 
 ```bash
 cd web-perf-lab

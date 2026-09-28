@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lighthouse 综合评分 · 优化版</title>
+
+<!-- ✅ SEO：补上描述 -->
+<meta name="description" content="Acme 产品：让团队协作快 10 倍。三分钟接入，按量计费，数据可导出。">
+
+<!-- ✅ 只有一个样式表，且每条规则都被用到（对比 bad 版的 45KB 无用 CSS） -->
+<link rel="stylesheet" href="/assets/lh/theme-good.css">
+
+<!-- ✅ 脚本全部 defer：不阻塞解析。
+     而且这份脚本只有 1KB 且真的会被调用（对比 bad 版的 60KB 死代码） -->
+<script src="/assets/lh/app-good.js" defer></script>
+
+<!-- ✅ 没有 console 错误，没有已废弃 API -->
+</head>
+<body>
+
+<header class="lh-header">
+  <!-- ✅ 图片有 alt、有明确宽高 → 不会 CLS，读屏也能识别 -->
+  <img src="/api/image?w=120&h=120" width="40" height="40" alt="Acme 公司标志">
+  <span class="brand">Acme 产品</span>
+  <nav>
+    <a href="/lighthouse/audit/good">首页</a>
+    <a href="/lighthouse/guide">功能</a>
+    <a href="/lighthouse/guide">定价</a>
+    <a href="/lighthouse/guide">关于</a>
+  </nav>
+</header>
+
+<div class="lh-wrap">
+
+  <section class="lh-hero">
+    <!-- ✅ 首屏大图：
+         1. 同样 1200×675，但内容平滑 → 只有几 KB（对比 bad 版的 2.4MB）
+         2. width/height 齐全 → 浏览器提前预留空间，CLS = 0
+         3. fetchpriority="high" → 明确告诉浏览器这是 LCP 元素，优先下载
+         4. 首屏图不用 lazy（lazy 反而会推迟 LCP） -->
+    <img src="/api/image?w=1200&h=675"
+         width="1200" height="675"
+         fetchpriority="high"
+         alt="产品界面示意图">
+
+    <h1>让团队协作快 10 倍</h1>
+    <p>一句话说清产品价值。这段文字的位置从加载开始就是确定的 ——
+       因为上面那张图已经预留好了高度。</p>
+
+    <!-- ✅ 标题层级连续：h1 → h2（不再跳级） -->
+    <h2>为什么选我们</h2>
+  </section>
+
+  <section class="lh-features">
+    <div class="card">
+      <h3>开箱即用</h3>
+      <p>三分钟接入，不需要改现有架构。</p>
+    </div>
+    <div class="card">
+      <h3>按量计费</h3>
+      <p>用多少付多少，没有最低消费。</p>
+    </div>
+    <div class="card">
+      <h3>数据可导出</h3>
+      <p>随时带走你的数据，不锁定。</p>
+    </div>
+  </section>
+
+  <section class="lh-form">
+    <h2>订阅产品更新</h2>
+    <form id="subscribe">
+      <!-- ✅ 每个输入框都有 <label>，并用 for 关联到 input 的 id -->
+      <div class="lh-field">
+        <label for="name">你的名字</label>
+        <input type="text" id="name" name="name" autocomplete="name">
+      </div>
+      <div class="lh-field">
+        <label for="email">邮箱地址</label>
+        <input type="email" id="email" name="email" autocomplete="email">
+      </div>
+      <!-- ✅ 按钮有可读文字，不只是图标 -->
+      <button class="lh-btn" type="submit">订阅</button>
+      <span id="form-msg" role="status"></span>
+    </form>
+  </section>
+
+  <div class="lh-footer">
+    <!-- ✅ 链接文字能说明去向（"查看定价方案" 而不是 "点击这里"） -->
+    <p>想了解更多？<a href="/lighthouse/guide">查看定价方案</a></p>
+
+    <!-- ✅ 对比度 7.4:1（AA 要求 4.5:1）+ 字号 13.5px（移动端要求 ≥12px） -->
+    <p style="color:#9aa5b1;font-size:13.5px">
+      版权所有 © <span id="year"></span> Acme 公司。本页面把正文之外的次要文字也做到了
+      4.5:1 以上的对比度，字号不低于 12px —— 这两条是 Lighthouse 无障碍审计的硬指标。
+    </p>
+  </div>
+
+</div>
+
+<!-- ✅ 没有多余的 DOM 膨胀：节点数保持在 100 以内 -->
+
+<!-- 回指南。刻意做成小浮层，不污染 DOM 节点数和对比度审计 -->
+<a class="lh-guide" href="/lighthouse/guide">← 观察指南</a>
+
+</body>
+</html>

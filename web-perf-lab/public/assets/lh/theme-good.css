@@ -1,0 +1,114 @@
+/* Lighthouse 优化版的样式 —— 每一条规则都被用到了。
+   对比 bad 版：那边额外加载了一份 45KB、几乎全是无用规则的"历史包袱"。 */
+
+:root {
+  --bg: #0f1419;
+  --panel: #161b22;
+  --border: #2a3441;
+  --text: #d7dde5;
+  --dim: #9aa5b1;
+  --blue: #58a6ff;
+  --green: #3fb950;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.65 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.lh-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 22px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.lh-header img { display: block; }
+.lh-header .brand { font-weight: 600; font-size: 17px; }
+.lh-header nav { margin-left: auto; display: flex; gap: 18px; }
+.lh-header nav a { color: var(--dim); text-decoration: none; font-size: 14px; }
+.lh-header nav a:hover { color: var(--text); }
+
+.lh-wrap { max-width: 880px; margin: 0 auto; padding: 24px 22px 60px; }
+
+.lh-hero { margin-bottom: 30px; }
+.lh-hero img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 10px;
+  margin-bottom: 18px;
+}
+.lh-hero h1 { font-size: 27px; margin: 0 0 10px; line-height: 1.3; }
+.lh-hero p { color: var(--dim); margin: 0 0 16px; }
+
+.lh-btn {
+  display: inline-block;
+  background: var(--blue);
+  color: #04121f;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 11px 22px;
+  border-radius: 8px;
+  border: none;
+  font-size: 15px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.lh-btn:hover { filter: brightness(1.1); }
+
+.lh-features { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 30px 0; }
+.lh-features .card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.lh-features h3 { margin: 0 0 6px; font-size: 15px; }
+.lh-features p { margin: 0; font-size: 13.5px; color: var(--dim); }
+
+.lh-form { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-top: 30px; }
+.lh-form h2 { font-size: 17px; margin: 0 0 14px; }
+.lh-field { margin-bottom: 14px; }
+.lh-field label { display: block; font-size: 13.5px; margin-bottom: 5px; color: var(--dim); }
+.lh-field input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b0f14;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+}
+.lh-field input:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+.lh-footer { border-top: 1px solid var(--border); margin-top: 40px; padding-top: 20px; font-size: 13.5px; color: var(--dim); }
+.lh-footer a { color: var(--blue); }
+
+/* 页脚那行小字：bad 版用 #6b7280（对比度 3.3:1，不达标），
+   good 版用 #9aa5b1（对比度 7.4:1，通过 AA） */
+
+/* 回到观察指南的浮动入口。
+   刻意做成一个不占布局的小浮层 —— 这个场景的页面是要被 Lighthouse 打分的，
+   在旁边塞一个大侧边栏会污染 DOM 节点数、对比度等审计结果。 */
+.lh-guide {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  background: var(--blue);
+  color: #04121f;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13.5px;
+  padding: 10px 16px;
+  border-radius: 20px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+}
+.lh-guide:hover { filter: brightness(1.1); }

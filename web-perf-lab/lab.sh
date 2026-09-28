@@ -193,6 +193,11 @@ do_routes() {
   echo "  动态 JS 替换         $LAB_URL/debug/override"
   echo "  断点全家桶           $LAB_URL/debug/breakpoints"
   echo
+  echo "── Lighthouse 综合评分 ──────────────────────────────────"
+  echo "  观察指南             $LAB_URL/lighthouse/guide"
+  echo "  问题版 / 优化版      $LAB_URL/lighthouse/audit/bad  vs  /good"
+  echo "  （这两个页面是干净的被测页面，没有侧边观察清单 —— 清单会污染评分）"
+  echo
   echo "索引页：$LAB_URL/"
 }
 

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<!-- ⚠ 故意不写 lang 属性 —— Lighthouse 的 "html-has-lang" 会报 -->
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lighthouse 综合评分 · 问题版</title>
+
+<!-- ⚠ 没有 meta description —— SEO 扣分 -->
+
+<!-- ⚠ 两个渲染阻塞样式表。第二个是 45KB 的"历史包袱"，
+     里面 95% 的规则在本页面根本用不到 —— "unused CSS" 审计会算出来 -->
+<link rel="stylesheet" href="/assets/lh/theme-bad.css?kb=45">
+<link rel="stylesheet" href="/assets/lh/theme-good.css">
+
+<!-- ⚠ 渲染阻塞脚本放在 head 里，而且它自己是个 600ms 的长任务
+     → 白屏 + TBT 暴涨 + "Eliminate render-blocking resources" -->
+<script src="/assets/lh/block-bad.js?ms=600"></script>
+
+<!-- ⚠ 60KB 的历史代码，从头到尾没被调用过 —— "unused JavaScript" -->
+<script src="/assets/lh/app-bad.js?kb=60"></script>
+
+<!-- ⚠ 用已废弃的 API（Lighthouse 的 deprecations 审计会报） -->
+<script>
+  // escape() 是 Web 标准里已废弃的函数
+  window.__LH_LEGACY_ESCAPE = escape('legacy');
+</script>
+</head>
+<body>
+
+<header class="lh-header">
+  <!-- ⚠ 图片没有 alt、没有宽高 → a11y 扣分 + CLS -->
+  <img src="/api/image?w=120&h=120&noise=1" width="40">
+  <span class="brand">Acme 产品</span>
+  <nav>
+    <a href="/lighthouse/audit/bad">首页</a>
+    <!-- ⚠ 链接不可爬取（href 是 javascript:）→ SEO 扣分 -->
+    <a href="javascript:void(0)">功能</a>
+    <a href="javascript:void(0)">定价</a>
+    <a href="javascript:void(0)">关于</a>
+  </nav>
+</header>
+
+<div class="lh-wrap">
+
+  <section class="lh-hero">
+    <!-- ⚠ 首屏大图：
+         1. 1200×675 的随机噪声 PNG ≈ 2.4MB（LCP 元凶）
+         2. 没有 width/height → 加载完把下面内容整体推下去（CLS）
+         3. 没有 fetchpriority → 浏览器不知道它重要
+         4. 没有 loading 策略 → 但它本来就在首屏，这里其实该 eager -->
+    <img src="/api/image?w=1200&h=675&noise=1" alt="">
+
+    <h1>让团队协作快 10 倍</h1>
+    <p>一句话说清产品价值。但注意：这段话在图片加载完之前，
+       位置是不确定的 —— 因为上面那张图没有预留高度。</p>
+
+    <!-- ⚠ 标题层级跳跃：h1 直接跳到 h4 → "heading-order" 报错 -->
+    <h4>为什么选我们</h4>
+  </section>
+
+  <section class="lh-features">
+    <div class="card">
+      <h3>开箱即用</h3>
+      <p>三分钟接入，不需要改现有架构。</p>
+    </div>
+    <div class="card">
+      <h3>按量计费</h3>
+      <p>用多少付多少，没有最低消费。</p>
+    </div>
+    <div class="card">
+      <h3>数据可导出</h3>
+      <p>随时带走你的数据，不锁定。</p>
+    </div>
+  </section>
+
+  <section class="lh-form">
+    <h2>订阅产品更新</h2>
+    <form id="subscribe">
+      <!-- ⚠ 只有 placeholder，没有 <label> → "label" 审计报错
+           （placeholder 不能替代 label：输入后提示就没了，读屏软件也不认） -->
+      <div class="lh-field">
+        <input type="text" placeholder="你的名字">
+      </div>
+      <div class="lh-field">
+        <input type="email" id="email" placeholder="邮箱地址">
+      </div>
+      <!-- ⚠ 按钮没有可访问名称（空的，只有图标）→ "button-name" 报错 -->
+      <button class="lh-btn" type="submit">&#10148;</button>
+      <span id="form-msg"></span>
+    </form>
+  </section>
+
+  <div class="lh-footer">
+    <!-- ⚠ 链接文字无意义 → "link-name" 报错 -->
+    <p>想了解更多？<a href="javascript:void(0)">点击这里</a></p>
+
+    <!-- ⚠ 对比度 3.3:1（AA 要求 4.5:1）+ 字号 10px（移动端要求 ≥12px）
+         → "color-contrast" 和 "font-size" 双双报错 -->
+    <p style="color:#6b7280;font-size:10px">
+      版权所有 © <span id="year"></span> Acme 公司。本页面的小字故意做成了低对比度 + 超小字号，
+      用来触发无障碍审计。正常项目里正文最小 16px、次要文字也要保证 4.5:1 的对比度。
+    </p>
+  </div>
+
+</div>
+
+<!-- ⚠ 1200 个空 div，把 DOM 节点数推到 1400+ → "dom-size" 报错 -->
+<div id="domBloat" hidden></div>
+
+<script>
+  // ⚠ 故意打一条 console.error → "errors-in-console" 审计报错
+  console.error('[LAB] 这是一条故意打出的错误，用于触发 Lighthouse 的 errors-in-console 审计');
+
+  // 塞 DOM
+  (function () {
+    const box = document.getElementById('domBloat');
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < 1200; i++) {
+      const d = document.createElement('div');
+      d.className = 'filler';
+      d.textContent = '';
+      frag.appendChild(d);
+    }
+    box.appendChild(frag);
+  })();
+
+  // 表单没有实际逻辑（bad 版故意不写）
+  document.getElementById('subscribe').addEventListener('submit', (e) => {
+    e.preventDefault();
+  });
+</script>
+
+<!-- 回指南。刻意做成小浮层，不污染 DOM 节点数和对比度审计 -->
+<a class="lh-guide" href="/lighthouse/guide">← 观察指南</a>
+
+</body>
+</html>

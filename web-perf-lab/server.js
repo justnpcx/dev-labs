@@ -39,6 +39,14 @@ const MIME = {
 // ───────────────────────────── 工具 ─────────────────────────────
 
 function send(res, status, body, headers = {}) {
+  // 兜底：已经发过响应就别再发。
+  // 正常流程走不到这里，但路由的返回值约定一旦写错（比如漏了 return true），
+  // 就会变成"发两次"，Node 会直接抛 ERR_HTTP_HEADERS_SENT 把进程干掉。
+  // 演练场崩了比返回一个错误页糟糕得多，所以留这一道。
+  if (res.headersSent) {
+    console.error('[warn] 响应已发送，忽略重复的 send()：', res.req?.url);
+    return;
+  }
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body), 'utf8');
   res.writeHead(status, { 'Content-Length': buf.length, ...headers });
   res.end(buf);
@@ -241,6 +249,114 @@ function serveAssetVariant(req, res, urlPath) {
   return true;
 }
 
+// ─────────── Lighthouse 场景：动态生成"大块未使用"资源 ───────────
+
+/**
+ * 生成一份**大量规则用不上**的 CSS。
+ *
+ * Lighthouse 的 "Reduce unused CSS" 审计要求文件够大（几十 KB）才会报，
+ * 而把这么大的文件提交进仓库很脏 —— 何况它全是无意义的规则。
+ * 动态生成既省仓库，又能调参（?kb= 控制大小）。
+ */
+function makeUnusedCss(kb) {
+  const out = [];
+  let i = 0;
+  while (Buffer.byteLength(out.join('\n'), 'utf8') < kb * 1024) {
+    const hue = i % 360;
+    out.push(
+      `.legacy-module-${i} .widget-${i} > .item-${i}:hover {`
+      + ` color: hsl(${hue}, 60%, 45%);`
+      + ` border-color: hsl(${(hue + 30) % 360}, 60%, 45%);`
+      + ` transition: all 0.2s ease-in-out; }`,
+      `.legacy-module-${i}[data-state="open"] .panel-${i} {`
+      + ` transform: translateZ(0); opacity: ${(i % 10) / 10}; }`
+    );
+    i++;
+  }
+  return out.join('\n');
+}
+
+/** 生成一份**大部分用不到**的 JS，外加一个真正的长任务 */
+function makeUnusedJs(kb) {
+  const out = ['/* 大部分是没被调用的历史代码 —— Lighthouse 的 "unused JavaScript" 会算进去 */'];
+  let i = 0;
+  while (Buffer.byteLength(out.join('\n'), 'utf8') < kb * 1024) {
+    out.push(
+      `function legacyHelper${i}(input) {`,
+      `  // 这段代码从来没有被调用过`,
+      `  const normalized = String(input || '').trim().toLowerCase();`,
+      `  return normalized.split('').reverse().join('').repeat(${(i % 3) + 1});`,
+      `}`,
+      `window.LEGACY_${i} = legacyHelper${i};`
+    );
+    i++;
+  }
+  return out.join('\n');
+}
+
+/**
+ * /assets/lh/*  —— Lighthouse 场景专用资源
+ *
+ * bad 版本是动态生成的（大块未使用），good 版本是真实的小文件。
+ * 两者都会被浏览器下载，所以"未使用率"的对比是真实的。
+ *
+ * ⚠ 返回值约定：处理了就返回 true，没匹配上返回 false。
+ * 这里踩过一次坑：写成 `return send(...)` —— send() 没有返回值，
+ * 于是函数返回 undefined，调用方 `if (serveLighthouseAsset(...)) return`
+ * 判断为假，继续往下走到静态兜底又 send 了一次，
+ * 触发 ERR_HTTP_HEADERS_SENT，把整个进程搞崩了。
+ */
+function serveLighthouseAsset(req, res, urlPath) {
+  const m = urlPath.match(/^\/assets\/lh\/([a-z0-9.-]+)$/);
+  if (!m) return false;
+
+  const name = m[1];
+  const params = new URL(req.url, 'http://x').searchParams;
+
+  if (name === 'theme-bad.css') {
+    const kb = Math.min(Number(params.get('kb') || 45), 300);
+    send(res, 200, makeUnusedCss(kb), {
+      'Content-Type': MIME['.css'],
+      'Cache-Control': 'no-store',          // 故意不缓存，Lighthouse 会扣分
+    });
+    return true;
+  }
+
+  if (name === 'app-bad.js') {
+    const kb = Math.min(Number(params.get('kb') || 60), 300);
+    send(res, 200, makeUnusedJs(kb), {
+      'Content-Type': MIME['.js'],
+      'Cache-Control': 'no-store',
+    });
+    return true;
+  }
+
+  if (name === 'block-bad.js') {
+    // 渲染阻塞 + 长任务：在 head 里同步引入时，白屏 + TBT 暴涨
+    const ms = Math.min(Number(params.get('ms') || 600), 3000);
+    send(res, 200,
+      `(function(){var d=Date.now()+${ms},x=0;while(Date.now()<d){x+=Math.sqrt(x+1);}`
+      + `window.__LH_BLOCK=x;})();`, {
+        'Content-Type': MIME['.js'],
+        'Cache-Control': 'no-store',
+      });
+    return true;
+  }
+
+  // 其余（good 版本）走静态文件
+  const file = path.join(PUBLIC_DIR, 'assets', 'lh', name);
+  if (!path.resolve(file).startsWith(path.resolve(PUBLIC_DIR)) || !fs.existsSync(file)) {
+    send(res, 404, '资源不存在');
+    return true;
+  }
+  const ext = path.extname(file);
+  send(res, 200, fs.readFileSync(file), {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  });
+  return true;
+}
+
 // ─────────────────────────── API ───────────────────────────
 
 async function handleApi(req, res, url) {
@@ -338,12 +454,13 @@ async function handleApi(req, res, url) {
 
 // ─────────────────────── 场景页面路由 ───────────────────────
 
-const SCENARIO_DIR = { network: 'network', performance: 'performance', debug: 'debug' };
+const SCENARIO_DIR = { network: 'network', performance: 'performance', debug: 'debug', lighthouse: 'lighthouse' };
 
 function serveScenario(res, urlPath) {
-  // /network/waterfall/bad  →  scenarios/network/waterfall-bad.html
-  // /debug/override         →  scenarios/debug/override.html
-  const m = urlPath.match(/^\/(network|performance|debug)\/([a-z0-9-]+)(?:\/(bad|good))?\/?$/i);
+  // /network/waterfall/bad   →  scenarios/network/waterfall-bad.html
+  // /debug/override          →  scenarios/debug/override.html
+  // /lighthouse/audit/bad    →  scenarios/lighthouse/audit-bad.html
+  const m = urlPath.match(/^\/(network|performance|debug|lighthouse)\/([a-z0-9-]+)(?:\/(bad|good))?\/?$/i);
   if (!m) return false;
 
   const [, group, name, variant] = m;
@@ -368,6 +485,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p.startsWith('/api/')) return await handleApi(req, res, url);
     if (serveAssetVariant(req, res, p)) return;
+    if (serveLighthouseAsset(req, res, p)) return;
     if (serveScenario(res, p)) return;
 
     // 其余走 public/ 静态目录

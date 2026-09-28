@@ -48,7 +48,7 @@
 <div class="hero">
   <h1>前端性能演练场</h1>
   <p>
-    14 个场景，每个都有 <b style="color:#ffb4ae">问题版</b> 和
+    15 个场景，每个都有 <b style="color:#ffb4ae">问题版</b> 和
     <b style="color:#7ee787">优化版</b> 两个独立页面。
     开两个标签页并排对比，在 Chrome DevTools 的 Network / Performance 面板里看差别。
   </p>
@@ -171,6 +171,25 @@
         <div class="links">
           <a class="bad" href="/performance/animate/bad">问题版</a>
           <a class="good" href="/performance/animate/good">优化版</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Lighthouse 综合评分 · 1 个</h2>
+    <div class="scenarios">
+      <div class="sc">
+        <h3>综合评分对照</h3>
+        <p>
+          前面 14 个场景各练一个技术点，这个是<b>整合测试</b> ——
+          故意踩满 Performance / Accessibility / Best Practices / SEO 四类审计，
+          跑一次 Lighthouse 就能看到前面学的东西怎么互相影响。
+        </p>
+        <div class="links">
+          <a class="solo" href="/lighthouse/guide">观察指南</a>
+          <a class="bad" href="/lighthouse/audit/bad">问题版</a>
+          <a class="good" href="/lighthouse/audit/good">优化版</a>
         </div>
       </div>
     </div>

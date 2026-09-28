@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lighthouse 综合评分 · 观察指南</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  .audit-row { display: grid; grid-template-columns: 1fr 90px 90px; gap: 8px;
+               padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .audit-row.head { color: var(--dim); font-weight: 600; font-size: 12px;
+                    border-bottom: 2px solid var(--border); }
+  .fail { color: #ffb4ae; font-weight: 600; }
+  .pass { color: #7ee787; font-weight: 600; }
+  .audit-group { margin: 18px 0 6px; font-size: 13px; color: var(--blue); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge info">指南</span>
+  <h1>Lighthouse 综合评分</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/lighthouse/audit/bad">打开问题版 →</a>
+  <a class="counterpart" href="/lighthouse/audit/good">打开优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>怎么跑 Lighthouse</h2>
+    <ol>
+      <li>用 <b>Chrome</b> 打开问题版页面</li>
+      <li>按 <code>F12</code> → 顶部标签栏找 <b>Lighthouse</b>
+          （找不到就点 <code>&gt;&gt;</code> 展开）</li>
+      <li>勾选四个分类：<b>Performance</b>、<b>Accessibility</b>、
+          <b>Best Practices</b>、<b>SEO</b></li>
+      <li>Mode 选 <b>Navigation</b>，Device 选 <b>Mobile</b>（默认）</li>
+      <li>点 <b>Analyze page load</b>，等 15~40 秒</li>
+      <li>记下四个分数，然后<b>对优化版跑一次</b>，对比</li>
+    </ol>
+    <div class="expect">
+      预期：问题版 Performance 会很低（<b>&lt;50</b>），优化版应该到 <b>90+</b><br>
+      具体分数取决于机器负载，<b>以你实测为准</b> —— 但这个差距一定存在。
+    </div>
+    <div class="warn">
+      <b>两个必须注意的前提</b><br>
+      ① <b>一定要用无痕窗口</b>（<code>Ctrl+Shift+N</code>）。
+      你装的扩展会注入脚本、拖慢加载，分数会失真。<br>
+      ② <b>同一个页面多跑几次</b>。Lighthouse 的分数有波动，
+      差 5~10 分是正常的，别拿单次结果下结论。
+    </div>
+    <div class="hint" style="margin-top:12px">
+      命令行也可以跑（更适合做 CI 门禁）：<br>
+      <code style="font-size:11px">npx lighthouse http://localhost:8082/lighthouse/audit/bad --view</code>
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>这个场景和前面 14 个有什么不同</h2>
+    <p class="hint">
+      前面每个场景练的是<b>一个</b>技术点。Lighthouse 是<b>综合评分</b> ——
+      它把几十项审计加权算成四个分数，正好当"整合测试"：
+      你在这里能一次看到前面学过的所有东西是怎么互相影响的。
+    </p>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>为什么这两个页面没有侧边观察清单</b><br>
+      观察清单本身会往页面里塞 DOM 节点、加文本、可能引入对比度问题 ——
+      <b>那会污染 Lighthouse 的评分</b>。所以这个场景的 bad/good 是干净的被测页面，
+      指南单独放在这一页。<br>
+      页面右下角有个小浮层可以跳回来。
+    </div>
+
+    <h2 style="margin-top:22px">问题版故意踩了哪些坑</h2>
+    <p class="hint">
+      下面每一项都对应 Lighthouse 报告里的一个具体审计条目。
+      跑完报告后对着这个表找，能确认你读懂了每一条在说什么。
+    </p>
+
+    <div class="audit-row head">
+      <span>审计条目</span><span>问题版</span><span>优化版</span>
+    </div>
+
+    <div class="audit-group">Performance · 加载性能</div>
+    <div class="audit-row"><span>Eliminate render-blocking resources<br><span class="hint">head 里的同步 script + 两个样式表</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>Reduce unused CSS<br><span class="hint">加载了 45KB 几乎全用不上的规则</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>Reduce unused JavaScript<br><span class="hint">60KB 从未被调用的历史代码</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>Properly size images<br><span class="hint">1200×675 随机噪声 PNG ≈ 2.4MB</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>Serve images in modern formats<br><span class="hint">用 PNG 而非 WebP/AVIF</span></span><span class="fail">失败</span><span class="pass">部分</span></div>
+    <div class="audit-row"><span>Efficient cache policy<br><span class="hint">资源响应头是 no-store</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>Largest Contentful Paint (LCP)</span><span class="fail">差</span><span class="pass">好</span></div>
+    <div class="audit-row"><span>Total Blocking Time (TBT)<br><span class="hint">600ms 长任务</span></span><span class="fail">差</span><span class="pass">好</span></div>
+    <div class="audit-row"><span>Cumulative Layout Shift (CLS)<br><span class="hint">图片没有宽高</span></span><span class="fail">差</span><span class="pass">好</span></div>
+
+    <div class="audit-group">Accessibility · 无障碍</div>
+    <div class="audit-row"><span><code>[lang]</code> 属性存在<br><span class="hint">&lt;html&gt; 没写 lang</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span><code>[alt]</code> 属性存在<br><span class="hint">图片没有 alt</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>表单元素有关联的 label<br><span class="hint">只有 placeholder</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>按钮有可访问名称<br><span class="hint">按钮是空的，只有图标</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>标题层级顺序<br><span class="hint">h1 直接跳到 h4</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>颜色对比度<br><span class="hint">#6b7280 在深色底上只有 3.3:1</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>链接有可辨识的名称<br><span class="hint">"点击这里"</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>文字尺寸可读<br><span class="hint">10px，移动端要求 ≥12px</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+
+    <div class="audit-group">Best Practices · 最佳实践</div>
+    <div class="audit-row"><span>控制台无错误<br><span class="hint">故意打了一条 console.error</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>避免已废弃的 API<br><span class="hint">用了 escape()</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>图片显示尺寸与固有比例一致</span><span class="fail">失败</span><span class="pass">通过</span></div>
+
+    <div class="audit-group">SEO · 搜索引擎优化</div>
+    <div class="audit-row"><span>有 meta description</span><span class="fail">失败</span><span class="pass">通过</span></div>
+    <div class="audit-row"><span>链接可被爬取<br><span class="hint">href="javascript:void(0)"</span></span><span class="fail">失败</span><span class="pass">通过</span></div>
+
+    <h2 style="margin-top:26px">报告怎么读</h2>
+    <p class="hint">
+      Lighthouse 报告分三层，从上往下读：
+    </p>
+    <table>
+      <tr><th>层次</th><th>看什么</th><th>怎么用</th></tr>
+      <tr>
+        <td><b>分数</b></td>
+        <td>四个 0~100 的数字</td>
+        <td>只看趋势，别当 KPI。差 5 分没有意义</td>
+      </tr>
+      <tr>
+        <td><b>Metrics</b></td>
+        <td>FCP / LCP / TBT / CLS / Speed Index<br>每个都有"实测值 + 分档"</td>
+        <td>先看这个 —— 它告诉你<b>哪里慢</b></td>
+      </tr>
+      <tr>
+        <td><b>Opportunities</b><br>+ Diagnostics</td>
+        <td>具体审计条目，带"预计可省 XXX ms"</td>
+        <td>再看这个 —— 它告诉你<b>为什么慢、怎么改</b></td>
+      </tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>别被"预计可省 XXX ms"骗了</b><br>
+      Lighthouse 的预估是<b>单条独立测算</b>的，不能简单相加。
+      它假设"其他都不变，只优化这一项"，所以把十条的预估值加起来，
+      会远远大于实际能省下的时间。<br>
+      正确做法：<b>按预估收益从大到小排序，一次改一个，改完再跑一次</b>。
+    </div>
+
+    <h2 style="margin-top:22px">Lighthouse 的局限性</h2>
+    <table>
+      <tr><th>局限</th><th>说明</th></tr>
+      <tr>
+        <td>实验室数据</td>
+        <td>是模拟环境跑出来的，<b>不等于真实用户</b>的体验。
+            真实数据要看 CrUX / RUM（真实用户监控）</td>
+      </tr>
+      <tr>
+        <td>只看首屏加载</td>
+        <td>不覆盖交互后的性能、长会话的内存增长</td>
+      </tr>
+      <tr>
+        <td>分数会波动</td>
+        <td>同一页面连跑三次可能差 10 分。要稳定就多跑取中位数</td>
+      </tr>
+      <tr>
+        <td>不测业务逻辑</td>
+        <td>它不知道你的接口该多快、你的图片该多大</td>
+      </tr>
+    </table>
+
+    <div class="warn" style="background:#2d1a1b;border-color:var(--red);color:#ffb4ae">
+      <b>最容易被误用的地方：把分数当 KPI</b><br>
+      见过太多团队为了刷分做无意义的事（比如把首屏图片删掉、
+      把统计脚本延后到用户交互后加载）。<br>
+      <b>分数是手段，不是目的。</b>真正要盯的是 Core Web Vitals 的
+      <b>真实用户数据</b> —— LCP、INP、CLS 的 P75 分位值。
+    </div>
+  </main>
+
+</div>
+
+</body>
+</html>
