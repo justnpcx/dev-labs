@@ -1,0 +1,15 @@
+# 通用忽略
+*.log
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# jvm-lab 运行时产物
+jvm-lab/target/
+jvm-lab/dumps/
+jvm-lab/logs/
+*.hprof
+
+# web-perf-lab
+web-perf-lab/node_modules/

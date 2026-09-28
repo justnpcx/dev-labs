@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JVM 演练场</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #161b22;
+    --panel2: #1c2430;
+    --border: #2a3441;
+    --text: #d7dde5;
+    --dim: #7d8899;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  h2 { font-size: 12px; margin: 0 0 10px; color: var(--dim); font-weight: 600;
+       text-transform: uppercase; letter-spacing: .06em; }
+  .top { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .pill { padding: 3px 10px; border-radius: 20px; font-size: 11px;
+          background: var(--panel2); border: 1px solid var(--border); }
+  .pill.ok { color: var(--green); border-color: #1f4d29; }
+  .pill.bad { color: var(--red); border-color: #5c2223; }
+  .spacer { flex: 1; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 8px; padding: 14px; }
+  .wide { grid-column: 1 / -1; }
+
+  /* 指标行 */
+  .metric { display: flex; justify-content: space-between; align-items: baseline;
+            padding: 5px 0; border-bottom: 1px dashed #222a35; }
+  .metric:last-child { border-bottom: none; }
+  .metric .k { color: var(--dim); }
+  .metric .v { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 13px; }
+  .big { font-size: 22px; font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+
+  /* 进度条 */
+  .bar { height: 6px; background: #222a35; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; width: 0; transition: width .3s, background .3s; }
+
+  canvas { display: block; width: 100%; height: 52px; margin-top: 8px; }
+
+  /* 按钮 */
+  .btns { display: flex; flex-wrap: wrap; gap: 7px; }
+  button {
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 11px; font-size: 12px; cursor: pointer;
+    font-family: inherit; transition: .15s;
+  }
+  button:hover { background: #26313f; border-color: #3a4757; }
+  button:active { transform: translateY(1px); }
+  button.danger { color: #ffb4ae; border-color: #5c2223; }
+  button.danger:hover { background: #2d1a1b; }
+  button.reset { color: #7ee787; border-color: #1f4d29; }
+  button.reset:hover { background: #12261a; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  .hint { color: var(--dim); font-size: 11px; margin-top: 7px; line-height: 1.5; }
+  .args { font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+          color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+
+  .alert { background: #2d1a1b; border: 1px solid #5c2223; color: #ffb4ae;
+           padding: 9px 12px; border-radius: 6px; margin-bottom: 12px; display: none; }
+  .alert.show { display: block; }
+
+  /* 日志框：输出面板和文件查看器共用。
+     注意 overflow:auto 不能漏 —— 只设 max-height 而不设 overflow，
+     内容不会滚动，会直接顶出面板边界。 */
+  pre.logbox {
+    background: #0b0f14; border: 1px solid var(--border); border-radius: 6px;
+    padding: 11px; margin: 0; overflow: auto;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 11.5px;
+    line-height: 1.55; color: #a9b6c4;
+    white-space: pre-wrap; word-break: break-all;
+    overscroll-behavior: contain;
+  }
+  pre#out { max-height: 300px; }
+
+  /* 日志与快照面板 */
+  .filebar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .filebar label { display: flex; align-items: center; gap: 5px;
+                   font-size: 12px; color: var(--dim); cursor: pointer; }
+  .filepane { display: grid; grid-template-columns: 270px 1fr; gap: 12px; }
+  .filelist { height: 380px; overflow: auto;
+              border: 1px solid var(--border); border-radius: 6px; background: #0b0f14; }
+  .fileitem { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid #1a222c; }
+  .fileitem:last-child { border-bottom: none; }
+  .fileitem:hover { background: #161d26; }
+  .fileitem.active { background: #1c2a38; border-left: 3px solid var(--blue); }
+  .fileitem .fn { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+                  word-break: break-all; }
+  .fileitem .fm { color: var(--dim); font-size: 10.5px; margin-top: 2px; }
+  /* 固定高度 + 让内部 pre 用 flex 撑满，两栏高度才能对齐 */
+  .fileview { display: flex; flex-direction: column; min-width: 0; height: 380px; }
+  .filehead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+              font-size: 12px; color: var(--dim); min-height: 26px; flex: none; }
+  .filehead .fname { font-family: ui-monospace, Consolas, monospace; color: var(--text);
+                     min-width: 0;              /* flex 子项默认 min-width:auto，不加这行省略号不生效 */
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* min-height:0 是关键 —— flex 子项默认 min-height:auto，不改成 0 就压不下去，滚动条也不会出现 */
+  pre#fileContent { flex: 1; min-height: 0; }
+
+  @media (max-width: 760px) {
+    .filepane { grid-template-columns: 1fr; }
+    .filelist, .fileview { height: 280px; }
+  }
+
+  .hl-pause { color: #ffd479; }
+  .hl-full  { color: #ff9b8f; font-weight: 600; }
+  .hl-oom   { color: #ff7b72; font-weight: 600; }
+  .hl-thread { color: #79c0ff; font-weight: 600; }
+  .empty { color: var(--dim); padding: 14px; font-size: 12px; }
+
+  /* 悬停代码提示：鼠标停在场景按钮上，浮出对应的核心代码 */
+  .codetip {
+    position: fixed; z-index: 200; display: none;
+    max-width: 660px; min-width: 320px;
+    background: #0b0f14; border: 1px solid #3a4757; border-radius: 8px;
+    padding: 12px 14px;
+    box-shadow: 0 10px 32px rgba(0,0,0,.65);
+    /* 关键：不能捕获鼠标，否则会挡住按钮导致提示闪烁 */
+    pointer-events: none;
+  }
+  .codetip.show { display: block; }
+  .codetip .tiphead {
+    font-size: 11px; color: var(--blue); margin-bottom: 8px;
+    font-family: ui-monospace, Consolas, monospace;
+  }
+  .codetip pre {
+    margin: 0; font-size: 11.5px; line-height: 1.62;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    color: #a9b6c4; white-space: pre; overflow-x: auto;
+    max-height: 340px;
+  }
+  .codetip .hl-star { color: #ffd479; font-weight: 600; }
+  .codetip .tipnote {
+    font-size: 11px; color: var(--dim); line-height: 1.6;
+    margin-top: 9px; padding-top: 8px; border-top: 1px dashed #222a35;
+  }
+  .codetip .tipnote b { color: #ffb4ae; font-weight: 600; }
+  /* 有代码提示的按钮加个小标记 */
+  .btns button[data-code]::after {
+    content: 'ⓘ'; margin-left: 5px; opacity: .38; font-size: 10px;
+  }
+  .btns button[data-code]:hover::after { opacity: .85; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>JVM 演练场</h1>
+  <span class="pill" id="conn">连接中…</span>
+  <span class="pill" id="uptime"></span>
+  <span class="spacer"></span>
+  <button class="reset" onclick="hit('/reset','POST')">复位（清空所有泄漏）</button>
+  <button onclick="hit('/status')">刷新</button>
+</div>
+
+<div class="alert" id="alert"></div>
+
+<div class="grid">
+
+  <div class="panel">
+    <h2>堆内存 · Heap</h2>
+    <div class="big" id="heapBig">—</div>
+    <div class="bar"><i id="heapBar"></i></div>
+    <canvas id="heapChart"></canvas>
+    <div class="hint" id="heapHint"></div>
+  </div>
+
+  <div class="panel">
+    <h2>元空间 · Metaspace</h2>
+    <div class="big" id="metaBig">—</div>
+    <div class="bar"><i id="metaBar"></i></div>
+    <canvas id="metaChart"></canvas>
+    <div class="hint">类元数据。不在堆里，heap dump 看不到它。<br>
+      满了报 <code>OutOfMemoryError: Metaspace</code></div>
+  </div>
+
+  <div class="panel">
+    <h2>堆外直接内存 · Direct</h2>
+    <div class="big" id="directBig">—</div>
+    <div class="bar"><i id="directBar"></i></div>
+    <div class="hint">同样不在堆里，<code>-Xmx</code> 管不到，只看
+      <code>-XX:MaxDirectMemorySize</code></div>
+  </div>
+
+  <div class="panel">
+    <h2>线程</h2>
+    <div class="metric"><span class="k">当前</span><span class="v" id="thCount">—</span></div>
+    <div class="metric"><span class="k">峰值</span><span class="v" id="thPeak">—</span></div>
+    <div class="metric"><span class="k">累计创建</span><span class="v" id="thTotal">—</span></div>
+    <div class="metric"><span class="k">死锁线程</span><span class="v" id="thDead">—</span></div>
+    <div class="hint">容器 <code>pids.max</code> = <span id="pidsMax">—</span>，
+      超了就报 <code>unable to create new native thread</code></div>
+  </div>
+
+  <div class="panel">
+    <h2>GC</h2>
+    <div id="gcList"></div>
+    <div class="hint">次数暴涨但每次回收量极低 = GC 空转。<br>
+      用 <code>./lab.sh gc</code> 看 GC 日志详情</div>
+  </div>
+
+  <div class="panel">
+    <h2>隔离边界（容器 cgroup）</h2>
+    <div class="metric"><span class="k">内存上限</span><span class="v" id="cMem">—</span></div>
+    <div class="metric"><span class="k">容器已用</span><span class="v" id="cUsed">—</span></div>
+    <div class="metric"><span class="k">历史峰值</span><span class="v" id="cPeak">—</span></div>
+    <div class="metric"><span class="k">swap 上限</span><span class="v" id="cSwap">—</span></div>
+    <div class="metric"><span class="k">进程数上限</span><span class="v" id="cPids">—</span></div>
+    <div class="metric"><span class="k">CPU 配额</span><span class="v" id="cCpu">—</span></div>
+    <div class="metric"><span class="k">OOM kill 次数</span><span class="v" id="cOom">—</span></div>
+    <div class="hint">这些数字是从容器内读 cgroup 文件得到的，
+      是"限制到底生效没有"的唯一可信来源</div>
+  </div>
+
+  <div class="panel wide">
+    <h2>触发场景</h2>
+    <div class="btns" id="scenarioBtns"></div>
+    <div class="hint">
+      红框按钮会真的把对应资源打爆 —— 都在容器内，有 cgroup 硬限制兜底，不会影响宿主。<br>
+      <b>鼠标停在按钮上</b>可以看这个场景对应的核心代码（ⓘ 标记）。<br>
+      <b>堆 OOM 之后所有请求都会失败</b>（堆满了），点右上角「复位」即可恢复。<br>
+      死锁<b>无法</b>靠复位解除，需要 <code>./lab.sh restart</code>。<br>
+      GC 空转需要先 <code>./lab.sh restart gc-overhead</code> 换 profile 才可能触发报错，
+      当前默认 G1 下只会一直空转不报错。
+    </div>
+  </div>
+
+  <div class="panel wide">
+    <h2>日志与快照</h2>
+    <div class="filebar">
+      <button onclick="loadFiles()">刷新列表</button>
+      <button onclick="captureThreadDump()">采集线程栈</button>
+      <button onclick="makeDump(true)">生成堆快照（live）</button>
+      <button onclick="makeDump(false)">生成堆快照（含垃圾）</button>
+      <label><input type="checkbox" id="autoRefresh" onchange="toggleAuto()"> 自动刷新（2 秒）</label>
+      <span class="spacer"></span>
+      <span class="hint" id="fileHint"></span>
+    </div>
+    <div class="filepane">
+      <div class="filelist" id="fileList"><div class="empty">加载中…</div></div>
+      <div class="fileview">
+        <div class="filehead">
+          <span class="fname" id="viewName">未选择文件</span>
+          <span class="spacer"></span>
+          <button id="dlBtn" style="display:none" onclick="downloadCurrent()">下载</button>
+        </div>
+        <pre id="fileContent" class="logbox">点左侧文件查看内容。
+· GC 日志会高亮停顿行（黄色 Young、红色 Full）
+· 应用日志里的 OutOfMemoryError 会标红
+· .hprof 是二进制堆快照，页面看不了，点「下载」拿去用 MAT 分析</pre>
+      </div>
+    </div>
+    <div class="hint">
+      GC 日志文件是 <code>logs/gc.log</code>；OOM 时的堆快照自动落在 <code>dumps/</code>；
+      应用日志 <code>logs/app.log</code> 里有完整的 OOM 堆栈。<br>
+      <b>注意</b>：每次堆快照约 235MB，会自动写到宿主磁盘，记得定期
+      <code>./lab.sh clean</code>。
+    </div>
+  </div>
+
+  <div class="panel wide">
+    <h2>输出</h2>
+    <pre id="out" class="logbox">点上面的按钮试试。</pre>
+  </div>
+
+  <div class="panel wide">
+    <h2>实际生效的 JVM 参数</h2>
+    <div class="args" id="args">—</div>
+    <div class="hint">这是 <code>RuntimeMXBean.getInputArguments()</code> 的返回值 ——
+      你以为设了的参数，不一定真的生效。改参数用 <code>./lab.sh restart &lt;profile&gt;</code></div>
+  </div>
+
+</div>
+
+<script>
+const MAXPTS = 60;
+const hist = { heap: [], meta: [], direct: [] };
+
+function pct(used, max) { return max > 0 ? (used * 100 / max) : 0; }
+
+function color(p) {
+  if (p >= 85) return 'var(--red)';
+  if (p >= 60) return 'var(--yellow)';
+  return 'var(--green)';
+}
+
+// 画一条滚动折线。用原生 canvas，不引任何图表库 —— 少一个依赖少一个坑。
+function drawChart(id, data, max, stroke) {
+  const c = document.getElementById(id);
+  if (!c) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  // 参考线：上限
+  ctx.strokeStyle = '#2a3441';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 0.5); ctx.lineTo(w, 0.5); ctx.stroke();
+
+  if (data.length < 2 || max <= 0) return;
+
+  const n = MAXPTS;
+  const stepX = w / (n - 1);
+  const x0 = w - (data.length - 1) * stepX;
+
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    const x = x0 + i * stepX;
+    const y = h - Math.min(v / max, 1) * (h - 2) - 1;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  // 填充
+  ctx.lineTo(x0 + (data.length - 1) * stepX, h);
+  ctx.lineTo(x0, h);
+  ctx.closePath();
+  ctx.fillStyle = stroke.replace('rgb', 'rgba').replace(')', ',.13)');
+  ctx.fill();
+}
+
+function setBar(id, p) {
+  const el = document.getElementById(id);
+  el.style.width = Math.min(p, 100).toFixed(1) + '%';
+  el.style.background = color(p);
+}
+
+let alertDismissed = false;
+
+function render(d) {
+  const hp = d.heap, mp = d.metaspace, db = d.directBuffer || {};
+  const hpP = pct(hp.usedMb, hp.maxMb);
+
+  document.getElementById('heapBig').textContent =
+    hp.usedMb + ' / ' + hp.maxMb + ' MB  (' + hpP.toFixed(1) + '%)';
+  setBar('heapBar', hpP);
+  hist.heap.push(hp.usedMb); if (hist.heap.length > MAXPTS) hist.heap.shift();
+  drawChart('heapChart', hist.heap, hp.maxMb, 'rgb(88,166,255)');
+  document.getElementById('heapHint').textContent =
+    '剩余 ' + (hp.maxMb - hp.usedMb) + ' MB。超过 85% 就开始危险了 —— 见 CHEATSHEET 的 GC 空转专节。';
+
+  const mpP = pct(mp.usedMb, mp.maxMb);
+  document.getElementById('metaBig').textContent =
+    mp.usedMb + ' / ' + (mp.maxMb < 0 ? '无上限' : mp.maxMb + ' MB');
+  setBar('metaBar', mpP);
+  hist.meta.push(mp.usedMb); if (hist.meta.length > MAXPTS) hist.meta.shift();
+  drawChart('metaChart', hist.meta, mp.maxMb, 'rgb(188,140,255)');
+
+  // 直接内存没有显式的 max 字段，用 -Xmx 当参考刻度
+  const dbP = pct(db.usedMb || 0, 64);
+  document.getElementById('directBig').textContent =
+    (db.usedMb || 0) + ' MB / ' + (db.bufferCount || 0) + ' 个 buffer';
+  setBar('directBar', dbP);
+  hist.direct.push(db.usedMb || 0); if (hist.direct.length > MAXPTS) hist.direct.shift();
+
+  const th = d.threads;
+  document.getElementById('thCount').textContent = th.count;
+  document.getElementById('thPeak').textContent = th.peakCount;
+  document.getElementById('thTotal').textContent = th.totalStarted;
+  const deadEl = document.getElementById('thDead');
+  deadEl.textContent = th.deadlockedCount;
+  deadEl.style.color = th.deadlockedCount > 0 ? 'var(--red)' : '';
+
+  document.getElementById('gcList').innerHTML = d.gc.map(g =>
+    '<div class="metric"><span class="k">' + g.name + '</span>' +
+    '<span class="v">' + g.count + ' 次 / ' + g.timeMs + ' ms</span></div>'
+  ).join('');
+
+  const c = d.container || {};
+  document.getElementById('cMem').textContent = c.memoryLimitMb + ' MB';
+  document.getElementById('cUsed').textContent = c.memoryUsedMb + ' MB';
+  document.getElementById('cPeak').textContent = c.memoryPeakMb + ' MB';
+  document.getElementById('cSwap').textContent =
+    c.swapLimitMb === 0 ? '0（已禁用 swap）' : c.swapLimitMb + ' MB';
+  document.getElementById('cPids').textContent = c.pidsLimit + '（当前 ' + c.pidsCurrent + '）';
+  document.getElementById('cCpu').textContent = c.cpuMax || '—';
+  const oomEl = document.getElementById('cOom');
+  oomEl.textContent = c.oomKillCount < 0 ? '—' : c.oomKillCount;
+  oomEl.style.color = c.oomKillCount > 0 ? 'var(--red)' : '';
+  document.getElementById('pidsMax').textContent = c.pidsLimit;
+
+  document.getElementById('args').textContent = (d.jvmArgs || []).join('\n');
+
+  // 危险告警
+  const a = document.getElementById('alert');
+  const msgs = [];
+  if (hpP >= 85) msgs.push('堆使用率 ' + hpP.toFixed(0) + '%，即将 OOM');
+  if (mpP >= 85) msgs.push('元空间使用率 ' + mpP.toFixed(0) + '%，即将 OOM');
+  if (th.deadlockedCount > 0) msgs.push('检测到 ' + th.deadlockedCount + ' 个死锁线程（复位无效，需 ./lab.sh restart）');
+  if (msgs.length) { a.textContent = '⚠ ' + msgs.join('　|　'); a.classList.add('show'); }
+  else a.classList.remove('show');
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/status');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+    document.getElementById('conn').textContent = '已连接';
+    document.getElementById('conn').className = 'pill ok';
+  } catch (e) {
+    const el = document.getElementById('conn');
+    el.textContent = '连接失败（可能堆已满，点复位）';
+    el.className = 'pill bad';
+  }
+}
+
+async function hit(path, method) {
+  const out = document.getElementById('out');
+  out.textContent = (method || 'GET') + ' ' + path + '\n执行中…';
+  const t0 = performance.now();
+  try {
+    const r = await fetch(path, { method: method || 'GET' });
+    const text = await r.text();
+    let pretty = text;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) {}
+    out.textContent = (method || 'GET') + ' ' + path +
+      '\n耗时 ' + (performance.now() - t0).toFixed(0) + ' ms   HTTP ' + r.status +
+      '\n\n' + pretty;
+  } catch (e) {
+    out.textContent = (method || 'GET') + ' ' + path + '\n请求失败：' + e.message +
+      '\n（堆满时服务无法响应，点右上角「复位」）';
+  }
+  poll();
+}
+
+poll();
+setInterval(poll, 1000);
+
+/* ══════════════════ 日志与快照 ══════════════════ */
+
+let currentFile = null;
+let autoTimer = null;
+let lastFiles = [];
+
+function humanSize(bytes) {
+  if (bytes < 0) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 给日志行上色。GC 日志的停顿行、线程栈的死锁段，都是最该被一眼看到的。
+function highlight(text, path) {
+  const body = esc(text);
+  if (!path.endsWith('.log') && !path.endsWith('.txt')) return body;
+  return body.split('\n').map(l => {
+    if (/OutOfMemoryError|StackOverflowError|unable to create/.test(l))
+      return '<span class="hl-oom">' + l + '</span>';
+    // 线程栈：死锁段最刺眼，标红
+    if (/Found \d+ Java-level deadlock|Java stack information for the threads/.test(l))
+      return '<span class="hl-oom">' + l + '</span>';
+    // 线程头："name" #25 daemon prio=5 ... —— 蓝色，方便快速扫线程
+    if (/^"[^"]+" #\d+/.test(l))
+      return '<span class="hl-thread">' + l + '</span>';
+    if (/java\.lang\.Thread\.State: BLOCKED/.test(l))
+      return '<span class="hl-oom">' + l + '</span>';
+    if (/waiting to lock|parking to wait for/.test(l))
+      return '<span class="hl-pause">' + l + '</span>';
+    // GC 日志
+    if (/Pause Full|Full GC|G1 Compaction/.test(l))
+      return '<span class="hl-full">' + l + '</span>';
+    if (/Pause Young|Pause \(/.test(l))
+      return '<span class="hl-pause">' + l + '</span>';
+    return l;
+  }).join('\n');
+}
+
+async function loadFiles() {
+  const box = document.getElementById('fileList');
+  try {
+    const r = await fetch('/files');
+    const d = await r.json();
+    const files = d.files || [];
+    lastFiles = files;
+    if (!files.length) {
+      box.innerHTML = '<div class="empty">还没有文件。<br>点「生成堆快照」，或先触发一次 OOM。</div>';
+      return;
+    }
+    box.innerHTML = files.map(f =>
+      '<div class="fileitem' + (currentFile === f.path ? ' active' : '') +
+      '" onclick="openFile(\'' + f.path + '\')">' +
+      '<div class="fn">' + f.name + '</div>' +
+      '<div class="fm">' + f.dir + '/ · ' + humanSize(f.sizeBytes) +
+      ' · ' + new Date(f.modifiedAt).toLocaleTimeString('zh-CN') +
+      (f.sizeBytes > 100 * 1024 * 1024 ? ' · <span style="color:var(--yellow)">超 100MB</span>' : '') +
+      '</div></div>'
+    ).join('');
+    document.getElementById('fileHint').textContent = files.length + ' 个文件';
+  } catch (e) {
+    box.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+async function openFile(path) {
+  currentFile = path;
+  document.querySelectorAll('.fileitem').forEach(el => el.classList.remove('active'));
+  document.getElementById('viewName').textContent = path;
+  document.getElementById('dlBtn').style.display = 'inline-block';
+
+  const pre = document.getElementById('fileContent');
+
+  if (path.endsWith('.hprof')) {
+    pre.textContent = path + '\n\n这是二进制堆快照，网页里无法阅读。\n' +
+      '点右上角「下载」拿到本地，用 Eclipse MAT 打开：\n' +
+      '  · Histogram      按类看实例数与占用\n' +
+      '  · Dominator Tree 按 Retained Heap 看谁真正占着内存\n' +
+      '  · 右键 → Merge Shortest Paths to GC Roots → exclude weak/soft\n' +
+      '    顺着引用链就能找到"谁不让它释放"\n\n' +
+      '详细方法见 docs/DUMP-ANALYSIS.md';
+    loadFiles();
+    return;
+  }
+
+  try {
+    const r = await fetch('/files/content?path=' + encodeURIComponent(path) + '&lines=400');
+    const d = await r.json();
+    if (d.error) { pre.textContent = '读取失败：' + d.error; return; }
+    pre.innerHTML = highlight(d.content || '（空文件）', path);
+    pre.scrollTop = pre.scrollHeight;   // 日志看尾部，自动滚到底
+  } catch (e) {
+    pre.textContent = '读取失败：' + e.message;
+  }
+  loadFiles();
+}
+
+async function makeDump(live) {
+  const out = document.getElementById('out');
+  out.textContent = '正在生成堆快照（live=' + live + '）…\n' +
+    (live ? 'live=true 会先做一次 Full GC，会有短暂停顿' : '');
+  try {
+    const r = await fetch('/files/dump?live=' + live, { method: 'POST' });
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch (e) {
+    out.textContent = '失败：' + e.message;
+  }
+  loadFiles();
+}
+
+async function captureThreadDump() {
+  const out = document.getElementById('out');
+  out.textContent = '正在采集线程栈…\n默认 3 次采样、间隔 2 秒，约 4 秒返回。\n' +
+    '多次采样是为了对比：栈一直不变的线程才是卡住的。';
+  try {
+    const r = await fetch('/threads/dump?samples=3&intervalSeconds=2', { method: 'POST' });
+    const d = await r.json();
+    out.textContent = JSON.stringify(d, null, 2);
+    if (d.file) {
+      await loadFiles();
+      openFile(d.file);          // 采完自动打开，省一次点击
+    }
+  } catch (e) {
+    out.textContent = '采集失败：' + e.message;
+  }
+}
+
+function downloadCurrent() {
+  if (!currentFile) return;
+  // 超过 100MB 的文件经 Cloudflare 下载容易 502，先提醒
+  const f = lastFiles.find(x => x.path === currentFile);
+  if (f && f.sizeBytes > 100 * 1024 * 1024) {
+    const mb = Math.round(f.sizeBytes / 1024 / 1024);
+    if (!confirm(
+      '这个文件 ' + mb + 'MB，超过 100MB。\n\n' +
+      '经 Cloudflare 下载大概率会 502（Host Error）。\n\n' +
+      '建议改用：\n' +
+      '  · 点「生成堆快照（live）」，它只有约 31MB，能正常下载\n' +
+      '  · 或走 SSH 隧道：ssh -L 8081:127.0.0.1:8081 root@<IP> 后从 localhost:8081 下载\n\n' +
+      '仍要尝试下载吗？'
+    )) return;
+  }
+  window.location = '/files/download?path=' + encodeURIComponent(currentFile);
+}
+
+function toggleAuto() {
+  const on = document.getElementById('autoRefresh').checked;
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (on) {
+    autoTimer = setInterval(() => { if (currentFile) openFile(currentFile); }, 2000);
+  }
+}
+
+loadFiles();
+
+/* ══════════════════ 场景按钮 + 悬停代码提示 ══════════════════ */
+
+// 每个场景都带上「造成这个现象的核心代码」，鼠标停上去就能对着看。
+// 代码是从真实源码里摘的，注释标了出处。
+const SCENARIOS = [
+  {
+    label: '堆 OOM', danger: true, url: '/oom/heap?mb=8&count=64',
+    src: 'OomController.java  heap()',
+    code: `for (int i = 0; i < count; i++) {
+    byte[] block = new byte[mb * 1024 * 1024];
+    LeakRegistry.holdBytes(block);   // ★ 挂进静态 List
+}`,
+    note: `BYTE_BUCKETS 是 <b>static</b> 的，对象永远可达 → GC 一个都收不走。
+参数 8MB × 64 = 512MB，而堆上限只有 256MB。`,
+  },
+  {
+    label: '元空间 OOM', danger: true, url: '/oom/metaspace?count=200000',
+    src: 'OomController.java  metaspace()  +  ClassFactory.java  generate()',
+    code: `Class<?> clazz = ClassFactory.generate(LeakRegistry.nextClassSeq());
+LeakRegistry.holdClass(clazz);       // ★ 持有 Class 引用
+
+// ClassFactory 里：每个类定义进独立的 LabClassLoader
+currentLoader.define(binaryName, bytecodeFor(seq, binaryName));`,
+    note: `持有 Class 就持有它所属的 ClassLoader；Loader 活着，<b>类就无法卸载</b>。
+这就是真实世界里插件 / 热部署系统的 Metaspace 泄漏形态。`,
+  },
+  {
+    label: '直接内存 OOM', danger: true, url: '/oom/direct?mb=16&count=64',
+    src: 'OomController.java  direct()',
+    code: `ByteBuffer buffer = ByteBuffer.allocateDirect(mb * 1024 * 1024);
+buffer.put(0, (byte) 1);
+LeakRegistry.holdDirect(buffer);     // ★ 持有引用 → Cleaner 不触发`,
+    note: `堆外内存靠 <b>Cleaner</b> 回收，而 Cleaner 只在 ByteBuffer 被 GC 时才跑。
+强引用还在 → 这块内存<b>永远还不了</b>。<br>
+注意 -Xmx 管不到它，只看 -XX:MaxDirectMemorySize。`,
+  },
+  {
+    label: '线程数 OOM', danger: true, url: '/oom/threads?count=400',
+    src: 'OomController.java  threads()',
+    code: `Thread t = new Thread(() -> {
+    Thread.sleep(holdMillis);        // ★ 线程不退出
+}, "lab-held-thread-" + i);
+t.setDaemon(true);
+t.start();
+LeakRegistry.holdThread(t);          // ★ 还持有引用`,
+    note: `每个线程都要一份 <b>-Xss512k</b> 的栈。报的是"内存"错误，
+但根因是<b>进程数上限</b>（容器 pids.max=320），不是堆。`,
+  },
+  {
+    label: 'GC 空转', danger: true, url: '/oom/gc-overhead?livePercent=80&churnMillis=15000',
+    src: 'OomController.java  gcOverhead()',
+    code: `// ① 先用存活对象占住 85% 的堆
+while (heldBytes < targetLiveBytes) {
+    byte[] block = new byte[LIVE_BLOCK_BYTES];
+    LeakRegistry.holdBytes(block);
+    heldBytes += LIVE_BLOCK_BYTES;
+}
+// ② 再疯狂制造短命对象，一个都不留
+while (System.currentTimeMillis() < deadline) {
+    byte[] trash = new byte[4096];
+    churnedBytes += trash.length;
+}`,
+    note: `存活集越大，每次 GC 能回收的比例越低 → GC 时间占比飙到 100%、回收量趋近 0。<br>
+<b>G1 不抛 GC overhead limit exceeded</b>，它只会无限空转。`,
+  },
+  {
+    label: '慢速占堆', url: '/oom/heap?mb=4&count=5',
+    src: 'OomController.java  heap()  —— 同一段代码，只是参数不同',
+    code: `byte[] block = new byte[mb * 1024 * 1024];
+LeakRegistry.holdBytes(block);
+
+// 慢速占堆：mb=4,  count=5   →   20MB，不会 OOM
+// 堆 OOM  ：mb=8,  count=64  →  512MB，必炸`,
+    note: `对照这两个按钮：<b>同一段代码</b>，只是量不同。
+曲线形态一模一样 —— 所以单看曲线分不出"正常分配"和"泄漏"，要看长期趋势。`,
+  },
+  {
+    label: '栈溢出', danger: true, url: '/stack/overflow',
+    src: 'ThreadController.java  recurse()',
+    code: `private void recurse(int n) {
+    long a = n, b = n + 1L, c = n + 2L;   // 局部变量撑住栈帧
+    depth = n;
+    if (a + b + c == Long.MIN_VALUE) return;  // 永假，防 JIT 优化掉
+    recurse(n + 1);                       // ★ 无限递归
+}`,
+    note: `每递归一层吃掉一份栈帧，<b>-Xss512k</b> 下约 2553 层就炸。
+改 -Xss 再看返回的 depthReached，数字会跟着变。`,
+  },
+  {
+    label: '死锁', danger: true, url: '/lock/deadlock',
+    src: 'ThreadController.java  deadlock()',
+    code: `Thread t1 = new Thread(() -> {
+    synchronized (LOCK_A) {           // ① 先拿 A
+        sleepQuietly(200);
+        synchronized (LOCK_B) { }     // ② 再要 B
+    }
+});
+Thread t2 = new Thread(() -> {
+    synchronized (LOCK_B) {           // ① 先拿 B
+        sleepQuietly(200);
+        synchronized (LOCK_A) { }     // ② 再要 A   ← 顺序相反
+    }
+});`,
+    note: `两个线程<b>加锁顺序相反</b>，中间那个 sleep 保证它们交叉。
+JVM 自己维护锁等待图，jstack 会直接报 <b>Found one Java-level deadlock</b>。`,
+  },
+  {
+    label: 'CPU 打满', danger: true, url: '/cpu/spin?threads=2',
+    src: 'ThreadController.java  cpuSpin()',
+    code: `Thread t = new Thread(() -> {
+    double x = 1.0;
+    while (!Thread.currentThread().isInterrupted()) {
+        x = Math.sqrt(x + 1.0);      // ★ 纯计算：不阻塞、不分配、不 IO
+    }
+});`,
+    note: `纯计算循环，稳定吃满一个核。<b>用 isInterrupted() 做退出条件</b>，
+所以必须靠 interrupt 才能停 —— 这就是「停止空转」按钮的作用。`,
+  },
+  {
+    label: '停止空转', url: '/cpu/stop',
+    src: 'LeakRegistry.java  stopSpinThreads()',
+    code: `for (Thread t : SPIN_BUCKETS) {
+    t.interrupt();                   // ★ 让 while 里的 isInterrupted() 变 true
+}
+SPIN_BUCKETS.clear();`,
+    note: `空转线程<b>不会自己停</b>，必须显式 interrupt。
+这是所有"演练场把宿主 CPU 跑满"事故的根因。`,
+  },
+  {
+    label: '渐进泄漏 +2MB×5', url: '/leak/static?mb=2&count=5',
+    src: 'LeakController.java  staticLeak()  +  LeakRegistry.java',
+    code: `String key = "entry-" + KEY_SEQ.incrementAndGet();
+LeakRegistry.cachePut(key, new LeakEntry(key, payload));
+
+// LeakRegistry.java
+private static final Map<String, LeakEntry> STATIC_CACHE
+        = new ConcurrentHashMap<>();
+// ★ 只有 put，没有 remove / 没有 TTL / 没有容量上限`,
+    note: `这是<b>生产环境第一大泄漏类型</b>：缓存加了，淘汰策略忘了。
+用 LeakEntry 而不是 byte[]，是为了让 jmap -histo 里能一眼看到实例数在涨。`,
+  },
+  {
+    label: '看状态', url: '/status',
+    src: 'JvmStats.java  snapshot()',
+    code: `root.put("heap",         heap());          // MemoryMXBean
+root.put("metaspace",    metaspace());     // MemoryPoolMXBean("Metaspace")
+root.put("directBuffer", directBuffer());  // BufferPoolMXBean("direct")
+root.put("threads",      threads());       // ThreadMXBean
+root.put("gc",           gc());            // GarbageCollectorMXBean
+root.put("jvmArgs",      jvmArgs());       // RuntimeMXBean`,
+    note: `全部来自 <b>java.lang.management</b>，没有任何额外依赖。
+看懂这个就能自己写监控，不用等 Micrometer 那一层封装。`,
+  },
+];
+
+const RESET_CODE = {
+  src: 'LeakRegistry.java  clearBuckets()',
+  code: `BYTE_BUCKETS.clear();
+DIRECT_BUCKETS.clear();
+CLASS_BUCKETS.clear();
+THREAD_BUCKETS.clear();
+STATIC_CACHE.clear();
+ClassFactory.reset();   // ★ 丢掉所有代 ClassLoader`,
+  note: `只清 List 是不够的 —— 类还挂在 ClassLoader 上。
+必须让 <b>ClassLoader 本身不可达</b>，Full GC 才会连类带元数据一起卸载。<br>
+死锁线程清不掉：reset 改不了已经形成的锁等待环。`,
+};
+
+const DUMP_CODES = {
+  live: {
+    src: 'FileController.java  dumpHeap()',
+    code: `HotSpotDiagnosticMXBean bean = ManagementFactory
+        .getPlatformMXBean(HotSpotDiagnosticMXBean.class);
+bean.dumpHeap(path, live);   // live=true 先做一次 Full GC`,
+    note: `live=true → 只 dump 存活对象，约 <b>31MB</b>；
+OOM 自动落盘发生在堆已满时，约 <b>235MB</b>。差 7 倍。`,
+  },
+  all: {
+    src: 'FileController.java  dumpHeap()',
+    code: `bean.dumpHeap(path, false);  // live=false，包含垃圾对象`,
+    note: `保留现场（含即将被回收的垃圾），文件更大。
+适合研究"OOM 那一刻堆里到底是什么"。`,
+  },
+};
+
+const THREAD_DUMP_CODE = {
+  src: 'ThreadDumpController.java  dump()',
+  code: `long pid = ProcessHandle.current().pid();
+Process p = new ProcessBuilder("jcmd", String.valueOf(pid), "Thread.print")
+        .redirectErrorStream(true)
+        .start();
+
+// 为什么调 jcmd 而不用 ThreadMXBean？
+// ThreadMXBean 拿不到 nid —— 那是把 top -H 和线程栈对上的唯一钥匙`,
+  note: `默认采 <b>3 次</b>、间隔 2 秒。单次 dump 只能看到"此刻在哪"，
+看不出"卡住没动" —— <b>栈一直不变</b>的那些线程才是问题所在。<br>
+死锁不用自己推等待图，jcmd 末尾会直接报 <b>Found one Java-level deadlock</b>。`,
+};
+
+function codeHtml(code) {
+  return esc(code).split('\n').map(l =>
+    l.includes('★') ? '<span class="hl-star">' + l + '</span>' : l
+  ).join('\n');
+}
+
+function tipHtml(sc) {
+  return '<div class="tiphead">' + esc(sc.src) + '</div>' +
+         '<pre>' + codeHtml(sc.code) + '</pre>' +
+         (sc.note ? '<div class="tipnote">' + sc.note + '</div>' : '');
+}
+
+function showTip(el, sc) {
+  const tip = document.getElementById('codeTip');
+  tip.innerHTML = tipHtml(sc);
+  tip.classList.add('show');
+
+  // 先显示再测量，然后贴着按钮定位；上方放不下就翻到下方
+  const r = el.getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let top = r.top - th - 10;
+  if (top < 8) top = r.bottom + 10;
+  let left = r.left;
+  if (left + tw > window.innerWidth - 8) left = window.innerWidth - tw - 8;
+  if (left < 8) left = 8;
+  tip.style.top = top + 'px';
+  tip.style.left = left + 'px';
+}
+
+function hideTip() {
+  document.getElementById('codeTip').classList.remove('show');
+}
+
+function attachTip(el, sc) {
+  if (!sc) return;
+  el.dataset.code = '1';
+  el.addEventListener('mouseenter', () => showTip(el, sc));
+  el.addEventListener('mouseleave', hideTip);
+  el.addEventListener('click', hideTip);   // 点完就收起来，别挡着看输出
+}
+
+function renderScenarioButtons() {
+  const box = document.getElementById('scenarioBtns');
+  box.innerHTML = '';
+  SCENARIOS.forEach(sc => {
+    const b = document.createElement('button');
+    if (sc.danger) b.className = 'danger';
+    b.textContent = sc.label;
+    b.onclick = () => hit(sc.url);
+    attachTip(b, sc);
+    box.appendChild(b);
+  });
+}
+
+renderScenarioButtons();
+
+// 复位按钮 + 快照/线程栈按钮也挂上提示
+document.querySelectorAll('.top button.reset').forEach(b => attachTip(b, RESET_CODE));
+document.querySelectorAll('.filebar button').forEach(b => {
+  const t = b.textContent.trim();
+  if (t.includes('live')) attachTip(b, DUMP_CODES.live);
+  else if (t.includes('含垃圾')) attachTip(b, DUMP_CODES.all);
+  else if (t.includes('线程栈')) attachTip(b, THREAD_DUMP_CODE);
+});
+
+// 滚动时收起提示 —— position:fixed 的浮层不跟着滚，留着会飘在错的位置
+window.addEventListener('scroll', hideTip, { passive: true });
+</script>
+<div id="codeTip" class="codetip"></div>
+
+</body>
+</html>

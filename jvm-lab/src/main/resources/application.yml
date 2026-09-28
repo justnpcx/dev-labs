@@ -1,0 +1,57 @@
+server:
+  # 这里故意不写成 ${SERVER_PORT:8080}：
+  # 本机环境里存在 SERVER__PORT=50274 这类变量，Spring Boot 的宽松绑定会把它
+  # 识别成 server.port，而环境变量优先级高于本文件，于是端口会被莫名顶掉。
+  # 真正要改端口，请用命令行参数（优先级最高）：--server.port=9090
+  port: 8080
+  # 演练场不需要优雅停机之外的任何东西；关掉 banner 让日志更干净
+  tomcat:
+    max-threads: 50
+
+spring:
+  application:
+    name: jvm-lab
+  main:
+    banner-mode: off
+
+logging:
+  level:
+    root: INFO
+    lab.jvm: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n"
+  file:
+    # 关键：容器模式下 Spring Boot 默认只往 stdout 写，日志会被 Docker 的
+    # json-file 驱动接管（10MB×3 轮转），/logs/app.log 根本不会被创建 ——
+    # 那样仪表盘的「应用日志」就只能看到陈文件，OOM 堆栈也读不到。
+    # 指定 file.name 后，日志**同时**写 stdout 和这个文件。
+    name: /logs/app.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 5
+      total-size-cap: 50MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # heapdump / threaddump 是演练场的核心工具：一个 HTTP 请求就能拿 dump。
+        # 注意这里**刻意不包含 env** —— /actuator/env 会吐出全部配置属性，
+        # 属于信息泄露。本演练场准备挂到公网（Cloudflare Tunnel + Access），
+        # 少暴露一个是一个。
+        include: health,info,metrics,heapdump,threaddump
+  endpoint:
+    heapdump:
+      enabled: true
+    threaddump:
+      enabled: true
+    # 双保险：即使上面的 include 被误改，env 也不会通过 HTTP 暴露
+    env:
+      enabled: false
+  # actuator 自己也会占内存，关掉不必要的
+  metrics:
+    enable:
+      jvm: true
+      process: true
+      system: true

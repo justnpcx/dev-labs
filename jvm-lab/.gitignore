@@ -1,0 +1,9 @@
+target/
+dumps/
+logs/
+*.hprof
+.idea/
+*.iml
+
+# lab.sh 自动生成，切 profile 会变
+.env

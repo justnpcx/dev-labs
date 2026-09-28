@@ -1,0 +1,101 @@
+# JVM 演练场 —— 容器运行配置
+#
+# ============================ 隔离设计说明 ============================
+# 这个演练场会**主动制造 OOM、死锁、CPU 打满**，所以每一类资源都必须有硬上限，
+# 否则一次演练就可能把同机的其他服务（本机还跑着 AI 栈）一起拖死。
+#
+# 四道防线：
+#   1. 内存   mem_limit + memswap_limit 相等 → 禁止用 swap 兜底。
+#             没有 swap，超限时是"容器内进程被杀"，而不是"整机开始换页卡死"。
+#   2. 进程数 pids_limit=320 → /oom/threads 撑死也只能建 ~300 个线程，
+#             撞的是容器自己的限制，碰不到宿主的 ulimit -u。
+#   3. CPU    cpus=2.0 → /cpu/spin 最多吃掉 2 个核，宿主还剩 2 个。
+#   4. 端口   只绑 127.0.0.1 → 不对外网暴露。
+#
+# 另外还有两条容易被忽略的：
+#   - 日志轮转（logging.max-size）→ 防止容器日志把宿主磁盘写满
+#   - cap_drop ALL + no-new-privileges + read_only → 缩小容器被攻破后的影响面
+# =====================================================================
+#
+# 用法（建议通过 ./lab.sh 调用，它会按 profile 重写 .env）：
+#   docker compose up -d --build
+#   docker compose logs -f
+
+services:
+  jvm-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jvm-lab:1.0.0
+    container_name: jvm-lab
+    # 不用 always：容器被 OOM kill 时让它停下就好，避免反复重启刷日志
+    restart: "no"
+
+    ports:
+      # 只绑回环地址。这台机器可能对外有公网 IP，绝不能把这个"随便 OOM 的玩具"暴露出去
+      - "127.0.0.1:8081:8080"
+
+    # ---- 防线 1：内存 ----
+    # 为什么是 2g 而不是更小的值？
+    # HotSpot 的 is_server_class_machine() 要求「>= 2 CPU 且 >= 2GB 内存」，
+    # 不满足就默默把默认 GC 从 G1 降级成 Serial GC。
+    # 卡在 2g 以下会让你在毫不知情的情况下跑 Serial GC（生产上这是常见事故）。
+    # 想亲眼看到这个降级，把这里改成 1536m 重启，然后 ./lab.sh limits 看 GC 名字。
+    mem_limit: 2g
+    memswap_limit: 2g
+    # ---- 防线 2：进程/线程数 ----
+    # 故意设小（320），这样 /oom/threads 不用调很大就能复现
+    # "unable to create new native thread"。真实环境里这个限制通常来自
+    # 容器编排平台或 ulimit -u，这里把它显式化，方便你观察。
+    pids_limit: 320
+    # ---- 防线 3：CPU ----
+    cpus: "2.0"
+
+    environment:
+      # JAVA_OPTS 由 .env 提供，.env 由 ./lab.sh start <profile> 生成
+      JAVA_OPTS: "${LAB_JVM_LIMITS} ${LAB_GC} ${LAB_COMMON}"
+
+    volumes:
+      - ./dumps:/dumps
+      - ./logs:/logs
+
+    # ---- 加固 ----
+    # 容器内不需要任何 Linux capability，全丢掉
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # 根文件系统只读；只放开 /tmp（JVM 和 Tomcat 需要临时目录）
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+    # ---- 防线 4（磁盘）：容器日志轮转 ----
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "java -version >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    networks:
+      # default：compose 自建的网络，宿主通过 127.0.0.1:8081 访问
+      - default
+      # ai-net：接入同机 AI 栈的网络，让 cf-tunnel（cloudflared）能用
+      # 容器名直接访问 http://jvm-lab:8080。
+      # 这样公网流量走隧道进来，不必把端口暴露到宿主 0.0.0.0。
+      - ai-net
+
+networks:
+  default:
+    name: jvm-lab_default
+  ai-net:
+    # 由 /data/ai-stack/docker-compose.yml 创建，本文件不负责它的生命周期
+    external: true
+    name: ai-stack_ai-net
