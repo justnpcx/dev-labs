@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慢 TTFB 与重定向链 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>慢 TTFB + 重定向链</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/ttfb/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> 面板，勾 Disable cache</li>
+      <li>点「发起慢请求」—— 一个 1.5 秒延迟的接口</li>
+      <li>点它 → <b>Timing</b> 标签，展开 <b>Waiting for server response</b>（就是 TTFB）</li>
+      <li>看它占了总时长的多少</li>
+      <li>再点「发起重定向链」—— 看 Network 里出现 <b>4 条</b>记录</li>
+      <li>逐个看 Status：302 → 302 → 302 → 200</li>
+      <li>对比第一条和最后一条的 <b>Start time</b>，差了多少</li>
+    </ol>
+    <div class="expect">
+      预期：慢请求 TTFB ≈ <b>1500ms</b>，而 Content Download 只有几毫秒<br>
+      重定向链：4 次往返，每次都白等一个 RTT
+    </div>
+    <div class="warn">
+      <b>Timing 面板怎么读</b><br>
+      <code>Queued / Stalled</code> —— 排队和等待（可能是并发限制或等前一个请求）<br>
+      <code>DNS / Initial connection / SSL</code> —— 建连开销，复用连接时为 0<br>
+      <code>Request sent</code> —— 发出请求，通常 &lt;1ms<br>
+      <b><code>Waiting (TTFB)</code></b> —— <b>服务器处理时间</b>，慢查询/慢接口都在这<br>
+      <code>Content Download</code> —— 下载响应体，和响应体大小正相关
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="slow()">发起慢请求（TTFB 1.5s）</button>
+      <button onclick="chain()">发起重定向链（3 跳）</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>两个不同的问题</h3>
+    <table>
+      <tr><th>现象</th><th>根因</th><th>优化方向</th></tr>
+      <tr>
+        <td>TTFB 高</td>
+        <td>服务端处理慢<br>（慢 SQL、串行调下游、没缓存）</td>
+        <td>加索引、加缓存、<br>并行化下游调用</td>
+      </tr>
+      <tr>
+        <td>重定向链</td>
+        <td>URL 规范化、<br>旧的跳转规则层层叠加</td>
+        <td>直接指向最终地址，<br>砍掉中间跳</td>
+      </tr>
+    </table>
+
+    <h3>重定向为什么贵</h3>
+    <p class="hint">
+      每一次 302 都是一次<b>完整的往返</b>：
+      客户端发请求 → 服务器回 302 → 客户端再发请求。
+      哪怕每个 RTT 只有 50ms，3 跳就是 150ms 的纯浪费，
+      而且这期间<b>什么都干不了</b>。<br><br>
+      更糟的是：重定向还可能<b>断掉连接复用</b>，
+      如果跳到不同域名，还要重新 DNS + TCP + TLS。
+    </p>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>别把 TTFB 和"网络慢"混为一谈</b><br>
+      用户抱怨"网站慢"时，先看 Timing 拆解：<br>
+      · 如果 <b>TTFB 占大头</b> → 服务端问题，前端优化没用<br>
+      · 如果 <b>Content Download 占大头</b> → 响应体太大，去压缩/裁剪<br>
+      · 如果 <b>Stalled 占大头</b> → 并发排队，去合并/拆域名<br>
+      定位错方向，后面全白做。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function slow() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  const url = '/api/slow?ms=1500';
+  const r = await fetch(url);
+  await r.json();
+  const e = performance.getEntriesByName(location.origin + url).pop();
+
+  labLog(`HTTP ${r.status}`);
+  labLog(`总耗时            = ${e.duration.toFixed(0)}ms`);
+  labLog(`其中 TTFB（等待）  = ${(e.responseStart - e.requestStart).toFixed(0)}ms`);
+  labLog(`其中 下载 body     = ${(e.responseEnd - e.responseStart).toFixed(0)}ms`);
+  labLog('');
+  labLog(`TTFB 占比 = ${((e.responseStart - e.requestStart) / e.duration * 100).toFixed(0)}%`);
+  labLog('--- 几乎全是服务端处理时间，前端再怎么优化都没用 ---');
+  status.textContent = '完成';
+}
+
+async function chain() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  const t0 = performance.now();
+  const r = await fetch('/api/chain?n=3');       // fetch 默认自动跟随重定向
+  const body = await r.json();
+  const cost = performance.now() - t0;
+
+  labLog(`最终 HTTP ${r.status}，body = ${JSON.stringify(body)}`);
+  labLog(`整个重定向链耗时 ${cost.toFixed(0)}ms`);
+  labLog(`redirected = ${r.redirected}`);
+  labLog(`最终 URL   = ${r.url}`);
+  labLog('');
+  labLog('--- 去 Network 面板数一下：应该有 4 条记录（3 个 302 + 1 个 200）---');
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

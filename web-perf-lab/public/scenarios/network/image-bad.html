@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图片与 CLS · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>未优化的图片</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/image/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> 面板，勾上 <b>Disable cache</b>，硬刷新</li>
+      <li>找到那张 PNG，看它的 <b>Size</b> —— 应该是 <b>360 KB</b> 左右</li>
+      <li>看 <b>Priority</b> 列 —— 首屏大图应该标 <code>High</code>，下面那张懒加载的是 <code>Low</code></li>
+      <li>切到 <b>Performance</b> 面板，勾上 <b>Web Vitals</b>（右上角齿轮 → 或者用 Lighthouse）</li>
+      <li>录制一次页面加载，看 <b>Experience</b> 轨道上有没有 <b>Layout Shift</b> 标记（紫色）</li>
+      <li>看 <b>LCP</b> 标记落在哪个元素上</li>
+    </ol>
+    <div class="expect">
+      预期：图片 <b>360 KB</b>（随机噪声压不动）<br>
+      页面加载时下方文字会<b>往下跳</b> —— 这就是 CLS。
+    </div>
+    <div class="warn">
+      <b>为什么会跳（CLS）</b><br>
+      <code>&lt;img&gt;</code> 没写 <code>width</code>/<code>height</code> 时，
+      浏览器一开始<b>不知道它要占多大地方</b>，只能先按 0 高度布局。
+      图片下载完才撑开 —— 后面的内容被整体推下去。<br>
+      这就是 <b>CLS（Cumulative Layout Shift，累积布局偏移）</b>，
+      是 Core Web Vitals 三大指标之一。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <p class="hint">
+      ↓ 图片加载完后，下面这段文字的位置会变化。盯住它。
+    </p>
+
+    <!-- 问题所在：
+         1. 没有 width / height → 布局时不知道占位 → CLS
+         2. noise=1 → 随机噪声，PNG 压不动，360KB
+         3. 没有 loading="lazy" → 首屏外也抢带宽
+         4. 没有 fetchpriority → 浏览器自己猜优先级 -->
+    <img src="/api/image?w=800&h=600&noise=1" alt="未优化的图片" style="max-width:100%">
+
+    <p id="jumpy" style="background:#2d1a1b;color:#ffb4ae;padding:12px;border-radius:6px">
+      ⬆ 上面这张图加载完之后，我才被推到了现在这个位置。<br>
+      在我出现之前，页面的其他部分都往上「跳」了一下。
+    </p>
+
+    <div id="metrics"></div>
+
+    <h3>这张图到底传了多少</h3>
+    <pre id="log">加载中…</pre>
+
+    <h3>四个问题，一行一个</h3>
+    <pre class="logbox">&lt;!-- 问题版 --&gt;
+&lt;img src="/api/image?w=800&amp;h=600&amp;noise=1" alt="..."&gt;
+     ↑ 没有宽高          ↑ 噪声图压不动
+       没有 lazy          没有优先级提示
+
+&lt;!-- 优化版 --&gt;
+&lt;img src="/api/image?w=800&amp;h=600"
+     width="800" height="600"        ← 预留空间，CLS = 0
+     loading="lazy"                  ← 首屏外延后加载
+     fetchpriority="high"            ← 告诉浏览器这是 LCP 元素
+     alt="..."&gt;</pre>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+onLoad(() => {
+  // 等图片加载完再读它的真实体积
+  const img = document.querySelector('img[src*="/api/image"]');
+  const report = () => {
+    const url = img.currentSrc || img.src;
+    const e = performance.getEntriesByName(url).pop();
+    if (!e) return;
+    labLog(`图片实际字节 = ${e.transferSize.toLocaleString()} B（${(e.transferSize/1024).toFixed(0)} KB）`);
+    labLog(`渲染尺寸 = ${img.naturalWidth}×${img.naturalHeight}`);
+    labLog('');
+    labLog('--- 优化版同样尺寸只要 1.7 KB：噪声内容压不动，渐变内容能压到 1/200 ---');
+  };
+  if (img.complete) setTimeout(report, 50);
+  else img.addEventListener('load', () => setTimeout(report, 50));
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>断点全家桶</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge info">练习</span>
+  <h1>断点全家桶</h1>
+  <span class="spacer"></span>
+  <span class="hint">演示逻辑在 /assets/breakpoint-demo.js</span>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>六种断点，逐个练</h2>
+    <ol>
+      <li><b>普通断点</b> — 最基础</li>
+      <li><b>条件断点</b> — 只在满足条件时停</li>
+      <li><b>日志点</b> — 不停，只打日志</li>
+      <li><b>DOM 断点</b> — 节点被改时停</li>
+      <li><b>Fetch/XHR 断点</b> — 请求发出时停</li>
+      <li><b>事件监听断点</b> — 事件触发时停</li>
+    </ol>
+    <div class="hint" style="margin-top:12px">
+      每个练习的详细步骤写在右边对应的区块里。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示区</h2>
+
+    <!-- ───────── 1 & 2 & 3：循环 ───────── -->
+    <h3>① 普通断点 / ② 条件断点 / ③ 日志点</h3>
+    <p class="hint">
+      点下面的按钮会跑一个 1~20 的循环。<br>
+      这个循环在 <code>breakpoint-demo.js</code> 的 <code>loopSum()</code> 里。
+    </p>
+    <div class="row">
+      <button onclick="runLoop()">跑循环（1~20）</button>
+      <span class="hint" id="loopResult"></span>
+    </div>
+
+    <table>
+      <tr><th>练习</th><th>操作</th></tr>
+      <tr>
+        <td><b>普通断点</b></td>
+        <td>Sources → <code>breakpoint-demo.js</code> → 点 <code>sum += i * i</code>
+            那行的<b>行号</b> → 出现蓝色标记 → 点按钮，
+            然后一直点「继续执行」，看 <code>i</code> 从 1 涨到 20</td>
+      </tr>
+      <tr>
+        <td><b>条件断点</b></td>
+        <td>右键那个行号 → <b>Add conditional breakpoint</b> →
+            输入 <code>i === 7</code> → 点按钮。<br>
+            这次<b>只停一次</b>，直接停在 <code>i === 7</code></td>
+      </tr>
+      <tr>
+        <td><b>日志点</b></td>
+        <td>右键行号 → <b>Add logpoint</b> →
+            输入 <code>i = {i}, sum = {sum}</code> → 点按钮。<br>
+            代码<b>不会停</b>，但 Console 里会打出 20 行记录</td>
+      </tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>日志点为什么比 console.log 好</b><br>
+      · 不用改代码，不用重新部署<br>
+      · 能访问<b>当前作用域的所有变量</b>，包括你事先不知道要看的那些<br>
+      · 用 <code>{变量名}</code> 插值，比字符串拼接清楚<br>
+      · 断点太多会打断执行流，日志点不会 —— 排查循环/高频函数时特别有用
+    </div>
+
+    <!-- ───────── 4：DOM 断点 ───────── -->
+    <h3>④ DOM 断点</h3>
+    <p class="hint">
+      下面这个方块会被改属性、改样式、改文本。
+      你想知道<b>是哪一行代码改的</b>。
+    </p>
+    <div class="row">
+      <button onclick="doMutate()">修改这个方块</button>
+      <div id="domTarget" class="box alt" style="display:inline-flex;align-items:center;
+           justify-content:center;font-size:11px">目标</div>
+    </div>
+    <table>
+      <tr><th>练习</th><th>操作</th></tr>
+      <tr>
+        <td><b>属性修改断点</b></td>
+        <td>切到 <b>Elements</b> 面板 → 找到 <code>#domTarget</code> →
+            <b>右键</b> → Break on → <b>attribute modifications</b> →
+            回来点按钮 → 会停在改属性的那一行</td>
+      </tr>
+      <tr>
+        <td><b>子树修改断点</b></td>
+        <td>同上，但选 <b>subtree modifications</b> ——
+            子节点被增删改时停</td>
+      </tr>
+      <tr>
+        <td><b>节点移除断点</b></td>
+        <td>选 <b>node removal</b> —— 这个节点被从 DOM 里删掉时停</td>
+      </tr>
+    </table>
+    <p class="hint">
+      <b>典型用途</b>：页面上某块内容莫名其妙变了，但你在代码里搜不到谁改的
+      （可能是第三方库、可能是某个定时器）。DOM 断点能直接抓到凶手。
+    </p>
+
+    <!-- ───────── 5：Fetch 断点 ───────── -->
+    <h3>⑤ Fetch / XHR 断点</h3>
+    <p class="hint">
+      点下面的按钮会请求 <code>/api/item/42</code>（服务端会延迟 300ms）。
+    </p>
+    <div class="row">
+      <button onclick="doFetch()">请求 /api/item/42</button>
+      <span class="hint" id="fetchResult"></span>
+    </div>
+    <table>
+      <tr><th>练习</th><th>操作</th></tr>
+      <tr>
+        <td><b>按 URL 断点</b></td>
+        <td><b>Sources</b> 面板右侧 → <b>XHR/fetch Breakpoints</b> →
+            点 <b>+</b> → 输入 <code>item/42</code> → 点按钮。<br>
+            会在 <code>fetch()</code> 调用处停下来</td>
+      </tr>
+      <tr>
+        <td><b>看调用栈</b></td>
+        <td>停下来后看右侧 <b>Call Stack</b> —— 能看到<b>是谁发起了这个请求</b>，
+            一层层往上翻就知道触发链路</td>
+      </tr>
+    </table>
+    <p class="hint">
+      <b>典型用途</b>：接口返回不对，但不知道是哪个页面、哪个组件发的请求。
+      按 URL 断点 + Call Stack 能直接定位。
+    </p>
+
+    <!-- ───────── 6：事件监听断点 ───────── -->
+    <h3>⑥ 事件监听断点</h3>
+    <div class="row">
+      <button id="evtBtn" onclick="doClick()">点我</button>
+      <span class="hint" id="evtResult"></span>
+    </div>
+    <table>
+      <tr><th>练习</th><th>操作</th></tr>
+      <tr>
+        <td><b>在元素上打断点</b></td>
+        <td><b>Elements</b> 面板选中这个按钮 →
+            <b>Event Listeners</b> 标签（在 Styles 旁边）→
+            展开 <code>click</code> → 点右边那个链接 → 跳到处理函数</td>
+      </tr>
+      <tr>
+        <td><b>用 Sources 面板</b></td>
+        <td><b>Sources</b> 右侧 → <b>Event Listener Breakpoints</b> →
+            展开 <b>Mouse</b> → 勾 <code>click</code> →
+            点按钮，会停在<b>所有</b> click 处理函数里</td>
+      </tr>
+    </table>
+    <p class="hint">
+      <b>典型用途</b>：不知道某个点击效果是哪段代码做的。
+      全局事件断点会停在所有 click 处理函数上，挨个看调用栈就能找到。
+    </p>
+
+    <!-- ───────── 加分项：Blackboxing ───────── -->
+    <h3>⑦ 加分项：Blackboxing（屏蔽第三方库）</h3>
+    <p class="hint">
+      调试时最烦的是<b>一步步跳进 jQuery / React 内部</b>。
+      Blackbox 能让调试器<b>跳过</b>指定脚本。
+    </p>
+    <table>
+      <tr><th>做法</th><th>步骤</th></tr>
+      <tr>
+        <td>方式一</td>
+        <td>在 Sources 里右键某个文件 → <b>Blackbox script</b></td>
+      </tr>
+      <tr>
+        <td>方式二</td>
+        <td><b>Settings</b>（F12 → 右上齿轮）→ <b>Ignore List</b> →
+            加入匹配规则，如 <code>/node_modules/</code></td>
+      </tr>
+    </table>
+    <p class="hint">
+      黑盒之后，单步调试（F11）会自动跳过这些文件，直接停在你自己的代码里。
+      排查问题时能省下大量"跳进跳不出"的时间。
+    </p>
+
+    <!-- ───────── 加分项：Live Expressions ───────── -->
+    <h3>⑧ 加分项：Live Expressions</h3>
+    <p class="hint">
+      在 <b>Sources</b> 面板右侧找 <b>Watch</b> 旁边的 <b>Live Expressions</b>（有个眼睛图标）。<br>
+      添加一个表达式（比如 <code>document.querySelectorAll('*').length</code>），
+      它会<b>实时刷新</b>，不用打断点也不用写 console.log。<br><br>
+      调样式、看状态变化时非常方便。
+    </p>
+
+    <pre id="log">每个练习的操作结果会记录在这里</pre>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script src="/assets/breakpoint-demo.js"></script>
+<script>
+function runLoop() {
+  const t0 = performance.now();
+  const sum = window.LAB_BP.loopSum(20);
+  const cost = performance.now() - t0;
+  document.getElementById('loopResult').textContent = `结果 = ${sum}`;
+  labLog(`loopSum(20) = ${sum}，耗时 ${cost.toFixed(2)}ms`);
+}
+
+function doMutate() {
+  const step = window.LAB_BP.mutateDom();
+  labLog(`DOM 被修改，data-step = ${step}`);
+}
+
+async function doFetch() {
+  document.getElementById('fetchResult').textContent = '请求中…';
+  const data = await window.LAB_BP.fetchData(42);
+  document.getElementById('fetchResult').textContent = JSON.stringify(data);
+  labLog(`fetch 返回：${JSON.stringify(data)}`);
+}
+
+function doClick() {
+  const msg = window.LAB_BP.onButtonClick('evtBtn');
+  document.getElementById('evtResult').textContent = msg;
+  labLog(msg);
+}
+</script>
+</body>
+</html>

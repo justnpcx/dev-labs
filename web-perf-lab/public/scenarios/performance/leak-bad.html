@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>内存泄漏 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>Detached DOM 泄漏</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/leak/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Memory</b> 面板（不是 Performance）</li>
+      <li>先点一次「拍堆快照」，作为基线</li>
+      <li>点 5 次「创建并移除 100 个节点」</li>
+      <li>再点一次「拍堆快照」</li>
+      <li>在第二个快照里筛选 <b>Detached</b>（顶部下拉选 "Detached"）</li>
+      <li>对比两个快照的 <b>Retained Size</b>，看涨了多少</li>
+      <li>点「手动 GC」后再拍一次 —— 涨的部分<b>不会回落</b>，这就是泄漏</li>
+    </ol>
+    <div class="expect">
+      预期：Detached 节点数<b>持续增长</b>，手动 GC 也降不下来<br>
+      优化版：GC 后回落到基线
+    </div>
+    <div class="warn">
+      <b>什么叫 Detached DOM</b><br>
+      节点已经从页面上移除了（<code>removeChild</code>），
+      但 JS 里<b>还持有引用</b> —— 可能在一个数组里、一个闭包里、
+      或者被某个事件监听器捕获着。<br><br>
+      对浏览器来说：<b>你还有引用，我就不敢回收</b>。
+      于是这些节点连同它们的子节点、样式、事件监听器，
+      一直占着内存，直到页面刷新。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="leak()">创建并移除 100 个节点</button>
+      <button onclick="gc()">手动 GC（如果可用）</button>
+      <button onclick="reset()">重置计数器</button>
+    </div>
+    <pre id="log">等待操作…</pre>
+
+    <h3>当前状态</h3>
+    <table>
+      <tr><th>指标</th><th>值</th></tr>
+      <tr><td>被 JS 引用着的已移除节点</td><td class="mono" id="retained">0</td></tr>
+      <tr><td>JS 堆已用（Chrome 专有 API）</td><td class="mono" id="heap">—</td></tr>
+    </table>
+
+    <h3>问题代码</h3>
+    <pre class="logbox">const detached = [];          // ← 模块级数组，一直活着
+
+function createAndRemove() {
+  const container = document.getElementById('stage');
+
+  for (let i = 0; i &lt; 100; i++) {
+    const node = document.createElement('div');
+    node.textContent = '占位内容'.repeat(50);
+    node.addEventListener('click', () =&gt; {});   // 监听器也一起泄漏
+
+    container.appendChild(node);
+    container.removeChild(node);      // 从 DOM 移除了
+
+    detached.push(node);              // ❌ 但引用还在数组里
+  }
+}</pre>
+
+    <h3>真实项目里最常见的四种泄漏</h3>
+    <table>
+      <tr><th>类型</th><th>典型写法</th></tr>
+      <tr>
+        <td>未清理的事件监听</td>
+        <td>组件卸载了，<code>window.addEventListener</code> 还在</td>
+      </tr>
+      <tr>
+        <td>未清理的定时器</td>
+        <td><code>setInterval</code> 持有闭包，闭包里持有 DOM</td>
+      </tr>
+      <tr>
+        <td>全局缓存只增不减</td>
+        <td>用 <code>Map</code> 当缓存，从不 <code>delete</code></td>
+      </tr>
+      <tr>
+        <td>闭包意外捕获</td>
+        <td>回调里引用了整个大对象，其实只用到其中一个字段</td>
+      </tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>堆快照的对比方法</b><br>
+      1. 拍快照 A → 操作 → 拍快照 B → 再操作 → 拍快照 C<br>
+      2. 在快照 C 的顶部下拉选 <b>Comparison</b>，基线选快照 B<br>
+      3. 按 <b>Delta</b> 排序，找增长最多的类型<br>
+      4. 展开看 <b>Retained Size</b>（不是 Shallow Size）<br>
+      5. 选中对象 → 底部 <b>Retainers</b> 面板看谁在引用它
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+// ❌ 模块级引用，永远不会被回收
+const detached = [];
+let ops = 0;
+
+function createAndRemove() {
+  const stage = document.getElementById('stage');
+  for (let i = 0; i < 100; i++) {
+    const node = document.createElement('div');
+    // 塞点内容，让每个节点有实际内存占用，快照里看得更明显
+    node.textContent = '占位内容用于撑大节点内存'.repeat(50);
+    node.addEventListener('click', () => {});   // 监听器也一起泄漏
+
+    stage.appendChild(node);
+    stage.removeChild(node);      // 从 DOM 里移除了
+
+    detached.push(node);          // ❌ 引用还留着
+  }
+  ops++;
+  update();
+}
+
+function leak() {
+  createAndRemove();
+  labLog(`已创建并移除 100 个节点（第 ${ops} 次）`);
+  labLog(`当前有 ${detached.length} 个节点被 JS 引用着，无法回收`);
+  labLog('--- 去 Memory 面板拍堆快照，筛选 Detached ---');
+}
+
+function gc() {
+  // Chrome 的 Memory 面板里有个垃圾桶图标可以强制 GC。
+  // 代码里没有标准 API 能强制 GC —— 这里只是提示。
+  labLog('提示：点 Memory 面板左上角的垃圾桶图标（Collect garbage）才是真 GC');
+  labLog('代码里没有标准 API 能强制 GC，window.gc() 只在特殊启动参数下才有');
+  setTimeout(update, 300);
+}
+
+function reset() {
+  detached.length = 0;
+  ops = 0;
+  document.getElementById('log').textContent = '已清空引用数组（这次是真的释放了）';
+  setTimeout(update, 300);
+}
+
+function update() {
+  document.getElementById('retained').textContent = detached.length;
+  const m = performance.memory;
+  document.getElementById('heap').textContent = m
+    ? (m.usedJSHeapSize / 1024 / 1024).toFixed(1) + ' MB'
+    : '（这个浏览器不支持 performance.memory）';
+}
+
+setInterval(update, 1000);
+update();
+</script>
+</body>
+</html>

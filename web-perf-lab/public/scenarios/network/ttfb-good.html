@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慢 TTFB 与重定向链 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>低 TTFB，无重定向</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/ttfb/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> 面板，勾 Disable cache</li>
+      <li>点「发起快速请求」—— 服务端立刻响应</li>
+      <li>Timing 里 <b>Waiting for server response</b> 应该只有几毫秒</li>
+      <li>点「直接请求最终地址」—— Network 里只有 <b>1 条</b>记录，没有 302</li>
+      <li>和问题版对比：总耗时从 ~1600ms 降到 ~10ms</li>
+    </ol>
+    <div class="expect">
+      预期：TTFB ≈ <b>5ms</b>（问题版 1500ms）<br>
+      无重定向：<b>1 次往返</b>（问题版 4 次）
+    </div>
+
+    <h3 style="margin-top:18px">优化 TTFB 的常见手段</h3>
+    <table>
+      <tr><th>手段</th><th>适用</th></tr>
+      <tr><td>加数据库索引</td><td>慢 SQL 是最常见根因</td></tr>
+      <tr><td>加缓存（Redis / 内存）</td><td>读多写少的数据</td></tr>
+      <tr><td>并行调下游</td><td>串行调 3 个接口 → 改成并发</td></tr>
+      <tr><td>CDN 缓存静态页</td><td>内容不常变</td></tr>
+      <tr><td>流式响应（SSR）</td><td>先吐 HTML 头，边算边发</td></tr>
+    </table>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="fast()">发起快速请求</button>
+      <button onclick="direct()">直接请求最终地址</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动一：把处理时间降下来</h3>
+    <pre class="logbox">// 问题版：硬等 1.5 秒
+await new Promise(r =&gt; setTimeout(r, 1500));
+res.json({ ok: true });
+
+// 优化版：直接返回（真实场景里是命中缓存 / 走索引）
+res.json({ ok: true });</pre>
+
+    <h3>改动二：不要中间跳转</h3>
+    <pre class="logbox">// 问题版：三层跳转
+/api/chain?n=3   → 302 → /api/chain?n=2
+                 → 302 → /api/chain?n=1
+                 → 302 → /api/chain?n=0
+                 → 200
+
+// 优化版：直接指到终点
+/api/chain?n=0   → 200</pre>
+
+    <h3>重定向在什么情况下值得留</h3>
+    <table>
+      <tr><th>场景</th><th>要不要留</th></tr>
+      <tr><td>HTTP → HTTPS</td><td>留（安全必须）</td></tr>
+      <tr><td>裸域 → www</td><td>留一跳，别再多</td></tr>
+      <tr><td>旧 URL → 新 URL</td><td>留（保外链和 SEO）</td></tr>
+      <tr><td>为了"代码整齐"加的跳转</td><td><b>砍掉</b></td></tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>怎么发现线上有重定向链</b><br>
+      在 Network 面板顶部筛选框输入 <code>status-code:3xx</code>，
+      就能把所有重定向捞出来。生产环境建议用 RUM（真实用户监控）
+      按 TTFB 排序，找出最慢的那批接口 —— 通常前 5 个就占了大部分收益。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function fast() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  const url = '/api/chain?n=0';                  // 无延迟、无重定向
+  const r = await fetch(url);
+  await r.json();
+  const e = performance.getEntriesByName(location.origin + url).pop();
+
+  labLog(`HTTP ${r.status}`);
+  labLog(`总耗时           = ${e.duration.toFixed(0)}ms`);
+  labLog(`其中 TTFB（等待） = ${(e.responseStart - e.requestStart).toFixed(0)}ms`);
+  labLog(`其中 下载 body    = ${(e.responseEnd - e.responseStart).toFixed(0)}ms`);
+  labLog('');
+  labLog('--- 对比问题版：TTFB 从 1500ms 降到个位数 ---');
+  status.textContent = '完成';
+}
+
+async function direct() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  const t0 = performance.now();
+  const r = await fetch('/api/chain?n=0');
+  await r.json();
+  const cost = performance.now() - t0;
+
+  labLog(`HTTP ${r.status}，耗时 ${cost.toFixed(0)}ms`);
+  labLog(`redirected = ${r.redirected}   ← false 表示一次都没跳`);
+  labLog('');
+  labLog('--- Network 面板里应该只有 1 条记录 ---');
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

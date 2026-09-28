@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长任务阻塞主线程 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>长任务阻塞主线程</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/longtask/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>先看下面的<b>心跳计数器</b> —— 它每 50ms 跳一次，说明页面是活的</li>
+      <li>打开 <b>Performance</b> 面板，点录制（●）</li>
+      <li>点「跑一个长任务」—— 注意计数器<b>卡住不动了</b></li>
+      <li>等它跑完，停止录制</li>
+      <li>看 <b>Main</b> 轨道上那块又长又厚的黄色（Scripting）—— 上面会标<b>红色三角</b>，那就是 Long Task</li>
+      <li>看底部 <b>Summary</b> 里 Scripting 占了多少毫秒</li>
+    </ol>
+    <div class="expect">
+      预期：计数器冻结约 <b>800ms</b><br>
+      Main 轨道出现一个 &gt;50ms 的长任务（红色三角标记）
+    </div>
+    <div class="warn">
+      <b>为什么"卡"</b><br>
+      浏览器主线程只有一个。JS 执行、样式计算、布局、绘制、
+      以及<b>响应用户输入</b>，全都排在这一条线程上。<br>
+      一段同步 JS 跑 800ms，这 800ms 内：
+      <ul style="margin:6px 0 0;padding-left:18px">
+        <li>点击没反应</li>
+        <li>输入框打不出字</li>
+        <li>滚动不动</li>
+        <li>连动画都掉帧（rAF 也排不上队）</li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="row">
+      <span class="hint">心跳计数器（每 50ms 跳一次，它停住就说明主线程被占了）：</span>
+      <span class="mono" id="beat" style="font-size:18px;color:var(--green)">0</span>
+    </div>
+
+    <div class="row">
+      <button onclick="runLong(800)">跑一个长任务（800ms）</button>
+      <button onclick="runLong(2000)">来一个狠的（2000ms）</button>
+      <span class="hint" id="status">点一下试试</span>
+    </div>
+
+    <pre id="log">计数器在跑…点按钮看它停住</pre>
+
+    <h3>罪魁祸首</h3>
+    <pre class="logbox">function runLong(ms) {
+  const deadline = Date.now() + ms;
+  let x = 0;
+  while (Date.now() &lt; deadline) {     // ← 同步忙等，一口气占满主线程
+    x += Math.sqrt(x + 1);
+  }
+  return x;
+}</pre>
+
+    <h3>真实世界里的长任务长什么样</h3>
+    <table>
+      <tr><th>场景</th><th>典型耗时</th></tr>
+      <tr><td>一次性渲染几千个 DOM 节点</td><td>几百 ms ~ 数秒</td></tr>
+      <tr><td>大 JSON 的 <code>JSON.parse</code></td><td>几十 ~ 几百 ms</td></tr>
+      <tr><td>复杂计算没放 Worker</td><td>不定</td></tr>
+      <tr><td>第三方脚本（埋点、A/B 测试）</td><td>常见且难控</td></tr>
+      <tr><td>同步 XHR / 同步 localStorage</td><td>取决于 IO</td></tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>长任务的定义</b><br>
+      Chrome 把<b>超过 50ms</b> 的任务算作 Long Task。
+      为什么是 50ms？因为这大致是人能感知到"卡"的阈值，
+      也是 60fps 下 3 帧的时间。<br>
+      页面所有长任务的<b>超时部分之和</b>就是 <b>TBT（Total Blocking Time）</b>，
+      它是 Core Web Vitals 里 INP 的主要影响因子。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+// 心跳：每 50ms 更新一次。主线程被占住时它会停。
+let beats = 0;
+let lastBeat = performance.now();
+setInterval(() => {
+  document.getElementById('beat').textContent = ++beats;
+}, 50);
+
+function runLong(ms) {
+  const status = document.getElementById('status');
+  status.textContent = '正在跑长任务…';
+
+  // 记录一下这次任务实际阻塞了多久
+  const t0 = performance.now();
+  const deadline = Date.now() + ms;
+  let x = 0;
+  while (Date.now() < deadline) {
+    x += Math.sqrt(x + 1);
+  }
+  const cost = performance.now() - t0;
+  window.__LAB_LAST = x;
+
+  status.textContent = `长任务结束，阻塞了 ${cost.toFixed(0)}ms`;
+  labLog(`长任务执行完毕：实际阻塞主线程 ${cost.toFixed(0)}ms`);
+  labLog('这期间计数器完全停住 —— 用户的点击、输入同样也会被卡住');
+}
+</script>
+</body>
+</html>

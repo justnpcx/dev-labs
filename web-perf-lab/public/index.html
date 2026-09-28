@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>前端性能演练场</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  .hero { text-align: center; padding: 34px 20px 10px; }
+  .hero h1 { font-size: 24px; margin: 0 0 10px; }
+  .hero p { color: var(--dim); margin: 0 auto; max-width: 620px; font-size: 13.5px; }
+
+  .group { margin-bottom: 26px; }
+  .group > h2 {
+    font-size: 13px; color: var(--dim); text-transform: uppercase;
+    letter-spacing: .07em; margin: 0 0 12px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .scenarios { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .sc {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 13px 15px;
+  }
+  .sc h3 { font-size: 14px; margin: 0 0 5px; }
+  .sc p { font-size: 12.5px; color: var(--dim); margin: 0 0 10px; line-height: 1.55; }
+  .sc .links { display: flex; gap: 7px; flex-wrap: wrap; }
+  .sc a {
+    font-size: 12px; text-decoration: none; padding: 4px 10px;
+    border-radius: 5px; border: 1px solid; white-space: nowrap;
+  }
+  .sc a.bad  { color: #ffb4ae; border-color: #5c2223; background: #2d1a1b; }
+  .sc a.good { color: #7ee787; border-color: #1f4d29; background: #12261a; }
+  .sc a.solo { color: var(--blue); border-color: #1f3d5c; background: #12202e; }
+  .sc a:hover { filter: brightness(1.35); }
+
+  .tip {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--blue); border-radius: 8px;
+    padding: 14px 16px; font-size: 13px; color: #a9b6c4;
+  }
+  .tip b { color: var(--text); }
+  .tip ol { margin: 8px 0 0; padding-left: 20px; }
+  .tip li { margin-bottom: 5px; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>前端性能演练场</h1>
+  <p>
+    14 个场景，每个都有 <b style="color:#ffb4ae">问题版</b> 和
+    <b style="color:#7ee787">优化版</b> 两个独立页面。
+    开两个标签页并排对比，在 Chrome DevTools 的 Network / Performance 面板里看差别。
+  </p>
+</div>
+
+<div class="wrap">
+
+  <div class="tip">
+    <b>开始之前，先做这三件事：</b>
+    <ol>
+      <li>用 Chrome 打开，按 <code>F12</code> 打开 DevTools</li>
+      <li>切到 <b>Network</b> 面板，勾上 <b>Disable cache</b>（否则缓存场景看不出来）</li>
+      <li>每次测完按 <code>Ctrl+Shift+R</code> 硬刷新，保证数据干净</li>
+    </ol>
+    <div style="margin-top:10px">
+      提示：页面右上角都有「看优化版 →」按钮，可以直接在问题版和优化版之间跳转。
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Network 面板 · 7 个</h2>
+    <div class="scenarios">
+      <div class="sc">
+        <h3>串行 vs 并行请求</h3>
+        <p>看 Waterfall 的阶梯。串行时 7 个请求排成一列，总耗时是相加的。</p>
+        <div class="links">
+          <a class="bad" href="/network/waterfall/bad">问题版</a>
+          <a class="good" href="/network/waterfall/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>缓存策略</h3>
+        <p>强缓存 / 协商缓存 / 无缓存三者的区别，以及 304 为什么不传 body。</p>
+        <div class="links">
+          <a class="bad" href="/network/cache/bad">问题版</a>
+          <a class="good" href="/network/cache/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>响应压缩</h3>
+        <p>同一份 300KB 脚本，gzip 后剩几 KB。看 Size 和 Content 两列的差别。</p>
+        <div class="links">
+          <a class="bad" href="/network/compress/bad">问题版</a>
+          <a class="good" href="/network/compress/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>渲染阻塞 JS</h3>
+        <p>head 里的同步 script 会让首屏白屏。对比 defer / async 的执行时机。</p>
+        <div class="links">
+          <a class="bad" href="/network/blocking/bad">问题版</a>
+          <a class="good" href="/network/blocking/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>图片与 CLS</h3>
+        <p>没写宽高会导致布局偏移（CLS）。还有懒加载和 LCP 优先级。</p>
+        <div class="links">
+          <a class="bad" href="/network/image/bad">问题版</a>
+          <a class="good" href="/network/image/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>CORS 预检</h3>
+        <p>简单请求 vs 触发 OPTIONS 预检。看多出来的那次往返。</p>
+        <div class="links">
+          <a class="bad" href="/network/cors/bad">问题版</a>
+          <a class="good" href="/network/cors/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>慢 TTFB 与重定向链</h3>
+        <p>拆开 Timing 面板：Stalled / TTFB / Content Download 各占多少。</p>
+        <div class="links">
+          <a class="bad" href="/network/ttfb/bad">问题版</a>
+          <a class="good" href="/network/ttfb/good">优化版</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Performance 面板 · 5 个</h2>
+    <div class="scenarios">
+      <div class="sc">
+        <h3>长任务阻塞主线程</h3>
+        <p>Main 轨道上的红色三角。看 TBT 和页面响应有多迟钝。</p>
+        <div class="links">
+          <a class="bad" href="/performance/longtask/bad">问题版</a>
+          <a class="good" href="/performance/longtask/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>布局抖动</h3>
+        <p>读写交替导致「强制同步布局」。Performance 里紫色 Layout 反复出现。</p>
+        <div class="links">
+          <a class="bad" href="/performance/thrash/bad">问题版</a>
+          <a class="good" href="/performance/thrash/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>未节流的事件监听</h3>
+        <p>滚动时每帧都在跑重活。对比节流 / rAF 之后的效果。</p>
+        <div class="links">
+          <a class="bad" href="/performance/listener/bad">问题版</a>
+          <a class="good" href="/performance/listener/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>内存泄漏</h3>
+        <p>detached DOM：节点从页面上移除了，但还被 JS 引用着。用堆快照对比。</p>
+        <div class="links">
+          <a class="bad" href="/performance/leak/bad">问题版</a>
+          <a class="good" href="/performance/leak/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>动画属性选择</h3>
+        <p><code>top/left</code> vs <code>transform</code>：前者每帧触发 Layout，后者只走合成。</p>
+        <div class="links">
+          <a class="bad" href="/performance/animate/bad">问题版</a>
+          <a class="good" href="/performance/animate/good">优化版</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>JS 调试 · 2 个</h2>
+    <div class="scenarios">
+      <div class="sc">
+        <h3>动态 JS 替换（Local Overrides）</h3>
+        <p>不改服务端代码，在浏览器里直接改线上 JS 并即时生效、刷新保留。</p>
+        <div class="links">
+          <a class="solo" href="/debug/override">打开练习</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>断点全家桶</h3>
+        <p>条件断点、日志点、DOM 断点、XHR 断点、事件监听断点、Blackboxing。</p>
+        <div class="links">
+          <a class="solo" href="/debug/breakpoints">打开练习</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

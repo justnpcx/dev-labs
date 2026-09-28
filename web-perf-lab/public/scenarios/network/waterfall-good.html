@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>串行请求 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>并行请求</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/waterfall/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>同样打开 <b>Network</b>，勾上 <b>Disable cache</b></li>
+      <li>点「开始加载」，看 Waterfall</li>
+      <li>这次 7 个请求应该是<b>并排</b>的，起点几乎对齐</li>
+      <li>看 Summary 的 <code>Finish</code></li>
+    </ol>
+    <div class="expect">
+      预期：Finish ≈ <b>300ms</b>（不是 2100ms）<br>
+      每个请求的 Stalled 都接近 0 —— 它们同时出发。
+    </div>
+
+    <h3 style="margin-top:18px">和问题版对比</h3>
+    <table>
+      <tr><th>写法</th><th>总耗时</th></tr>
+      <tr><td class="mono">for + await</td><td class="mono">~2100ms</td></tr>
+      <tr><td class="mono">Promise.all</td><td class="mono">~300ms</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      快了 <b>7 倍</b>，而服务端一行代码都没改 —— 只是把「排队」改成了「同时发」。
+    </p>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>注意别矫枉过正。</b><br>
+      并行不是永远更好：<br>
+      · 浏览器对<b>同域名</b>的并发连接数有限制（HTTP/1.1 通常 6 个）<br>
+      · 几百个请求一起发会把连接池打满，反而更慢<br>
+      · 有依赖关系的请求本来就必须串行
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="load()">开始加载</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>改了什么</h3>
+    <p class="hint">
+      把 <code>await</code> 从循环里挪出来 —— 先<b>同时发起</b>所有请求拿到 Promise，
+      再用 <code>Promise.all</code> 一起等结果。
+    </p>
+    <pre class="logbox">// 先把所有请求都发出去（不 await）
+const promises = [];
+for (let i = 1; i &lt;= 7; i++) {
+  promises.push(fetch('/api/item/' + i));
+}
+// 再一起等
+const responses = await Promise.all(promises);</pre>
+    <p class="hint">
+      也可以用 <code>await Promise.all([1,2,3,4,5,6,7].map(i =&gt; fetch('/api/item/' + i)))</code>，
+      写法更短。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function load() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '加载中…';
+  const t0 = performance.now();
+
+  // 关键区别：先把请求全发出去，再统一等
+  const promises = [];
+  for (let i = 1; i <= 7; i++) {
+    promises.push(fetch('/api/item/' + i).then(r => r.json()));
+  }
+  const results = await Promise.all(promises);
+
+  const total = performance.now() - t0;
+  status.textContent = `全部完成，总耗时 ${total.toFixed(0)}ms`;
+  labLog(`7 个请求同时发出，全部返回耗时 ${total.toFixed(0)}ms`);
+  labLog(`--- 对比问题版的 ~2100ms ---`);
+}
+</script>
+</body>
+</html>

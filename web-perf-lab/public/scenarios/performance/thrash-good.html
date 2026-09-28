@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>布局抖动 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  #stage { position: relative; }
+  #stage .box { margin: 2px; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>批量读 → 批量写</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/thrash/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Performance</b> 面板录制</li>
+      <li>点「批量读写版」，等它跑完</li>
+      <li>停止录制，看 Main 轨道</li>
+      <li>紫色 Layout 块应该<b>只出现一两次</b>，而不是几百次</li>
+      <li>对比耗时：从 500ms+ 降到几十 ms</li>
+      <li>再试「只写不读版」—— 一次布局都不触发</li>
+    </ol>
+    <div class="expect">
+      预期：<b>Layout 触发 1 次</b>（问题版是数百次）<br>
+      耗时降到 <b>1/10 以下</b>
+    </div>
+
+    <h3 style="margin-top:18px">三种写法的对比</h3>
+    <table>
+      <tr><th>写法</th><th>布局次数</th><th>耗时</th></tr>
+      <tr><td>读→写→读→写</td><td>数百次</td><td>500ms+</td></tr>
+      <tr><td>先全读，再全写</td><td>1 次</td><td>~30ms</td></tr>
+      <tr><td>只写不读</td><td>1 次（帧末）</td><td>~10ms</td></tr>
+    </table>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="batched()">批量读写版</button>
+      <button onclick="writeOnly()">只写不读版</button>
+      <button onclick="reset()">重置</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+
+    <div id="stage"></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>核心改法：把读和写分开</h3>
+    <pre class="logbox">// ✅ 第一步：把所有「读」集中做完
+const heights = [];
+for (let i = 0; i &lt; boxes.length; i++) {
+  heights.push(boxes[i].offsetHeight);   // 只在第一次触发布局
+}
+// 此时布局已经是最新的，后面所有读都不再触发
+
+// ✅ 第二步：再把所有「写」集中做完
+for (let i = 0; i &lt; boxes.length; i++) {
+  boxes[i].style.width = (heights[i] * 2) + 'px';
+}
+// 写操作只让布局「失效」，不会立刻重算 —— 浏览器会攒到帧末统一算一次</pre>
+
+    <h3>如果非要在循环里读怎么办</h3>
+    <pre class="logbox">// 用 rAF 把读写拆到不同帧
+requestAnimationFrame(() =&gt; {
+  const h = el.offsetHeight;            // 这一帧读
+  requestAnimationFrame(() =&gt; {
+    el.style.width = h * 2 + 'px';      // 下一帧写
+  });
+});</pre>
+
+    <h3>更现代的工具</h3>
+    <table>
+      <tr><th>API</th><th>作用</th></tr>
+      <tr>
+        <td class="mono">FastDOM</td>
+        <td>库，自动把读写排队分离</td>
+      </tr>
+      <tr>
+        <td class="mono">ResizeObserver</td>
+        <td>被动接收尺寸变化，不用主动读</td>
+      </tr>
+      <tr>
+        <td class="mono">IntersectionObserver</td>
+        <td>被动接收可见性变化，替代 scroll + getBoundingClientRect</td>
+      </tr>
+      <tr>
+        <td class="mono">element.animate()</td>
+        <td>Web Animations，不经过主线程样式计算</td>
+      </tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>怎么在真实项目里发现它</b><br>
+      Performance 面板录制后，看 Main 轨道上<b>密集的紫色小块</b>。
+      点任意一块，下面的 Summary 会告诉你触发它的那行代码
+      （在 Bottom-Up / Call Tree 里找 <code>Layout</code>）。
+      这是定位布局抖动最快的路径。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const N = 300;
+
+function build() {
+  const stage = document.getElementById('stage');
+  stage.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < N; i++) {
+    const d = document.createElement('div');
+    d.className = 'box';
+    d.style.background = `hsl(${i % 360}, 60%, 55%)`;
+    d.style.width = '40px';
+    d.style.height = (10 + (i % 20)) + 'px';
+    frag.appendChild(d);
+  }
+  stage.appendChild(frag);
+  return [...stage.children];
+}
+
+function reset() {
+  build();
+  document.getElementById('status').textContent = '已重置';
+  document.getElementById('log').textContent = '等待开始…';
+}
+
+function batched() {
+  const boxes = [...document.querySelectorAll('#stage .box')];
+  const status = document.getElementById('status');
+  status.textContent = '跑批量读写版…';
+  const t0 = performance.now();
+
+  for (let round = 0; round < 3; round++) {
+    // ✅ 先把所有读做完
+    const heights = new Array(boxes.length);
+    for (let i = 0; i < boxes.length; i++) {
+      heights[i] = boxes[i].offsetHeight;          // 布局只在这里算一次
+    }
+    // ✅ 再统一写
+    for (let i = 0; i < boxes.length; i++) {
+      boxes[i].style.width = (heights[i] * 2) + 'px';
+    }
+  }
+
+  const cost = performance.now() - t0;
+  status.textContent = `完成，耗时 ${cost.toFixed(0)}ms`;
+  labLog(`${boxes.length} 个元素 × 3 轮，读写已分离`);
+  labLog(`总耗时 ${cost.toFixed(0)}ms`);
+  labLog('--- 对比抖动版的 500ms+ ---');
+}
+
+function writeOnly() {
+  const boxes = [...document.querySelectorAll('#stage .box')];
+  const status = document.getElementById('status');
+  status.textContent = '跑只写不读版…';
+  const t0 = performance.now();
+
+  for (let i = 0; i < boxes.length; i++) {
+    boxes[i].style.width = (40 + (i % 30)) + 'px';   // 不读，直接写
+  }
+
+  const cost = performance.now() - t0;
+  status.textContent = `完成，耗时 ${cost.toFixed(0)}ms`;
+  labLog(`只写不读：${boxes.length} 次写操作，耗时 ${cost.toFixed(0)}ms`);
+  labLog('写操作不触发布局 —— 浏览器会攒到帧末统一算一次');
+}
+</script>
+</body>
+</html>

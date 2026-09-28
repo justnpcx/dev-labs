@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CORS 预检 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>简单请求，无预检</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/cors/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> 面板，勾 Disable cache</li>
+      <li>点「发 3 次请求」</li>
+      <li>数记录数 —— 这次应该只有 <b>3 条</b>，没有 OPTIONS</li>
+      <li>点开任意一条 → Headers → 看 <b>Request Headers</b> 里<b>没有</b>自定义头</li>
+      <li>对比问题版的 6 条，想想差的那 3 个 RTT 值多少毫秒</li>
+    </ol>
+    <div class="expect">
+      预期：<b>3 次往返</b>（省掉了一半）<br>
+      在弱网下（每个 RTT 200ms），这就省了 600ms。
+    </div>
+
+    <h3 style="margin-top:18px">什么算「简单请求」</h3>
+    <table>
+      <tr><th>维度</th><th>要求</th></tr>
+      <tr><td>Method</td><td class="mono">GET / HEAD / POST</td></tr>
+      <tr><td>请求头</td><td>只能是「安全头」：<br>
+        <span class="mono">Accept, Accept-Language, Content-Language,
+        Content-Type, Range</span> 等</td></tr>
+      <tr><td>Content-Type</td><td class="mono">text/plain<br>multipart/form-data<br>
+        application/x-www-form-urlencoded</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      三个条件<b>全部满足</b>才是简单请求，才跳过预检。
+    </p>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="run()">发 3 次请求</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动就一行</h3>
+    <pre class="logbox">// 问题版：带自定义头 → 触发预检
+fetch('/api/cors/preflight', {
+  headers: { 'X-Lab-Token': 'abc123' }
+});
+
+// 优化版：不带自定义头 → 简单请求，直接发
+fetch('/api/cors/simple');</pre>
+
+    <h3>但现实里经常躲不掉</h3>
+    <p class="hint">
+      这几种情况<b>必须</b>预检，优化方向不是"消掉预检"，而是"别重复预检"：
+    </p>
+    <table>
+      <tr><th>场景</th><th>怎么办</th></tr>
+      <tr><td>要发 <code>Authorization</code> 头</td><td>预检躲不掉，把 Max-Age 设大</td></tr>
+      <tr><td>要 PUT / DELETE</td><td>同上</td></tr>
+      <tr><td>要发 JSON（<code>application/json</code>）</td><td>同上，这是最常见的</td></tr>
+      <tr><td>同源请求</td><td><b>根本不会有 CORS</b>，用同源代理即可</td></tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>最有效的优化：让它变成同源请求</b><br>
+      用反向代理把 API 挂到同一个域名下（<code>/api/*</code> 转发到后端），
+      浏览器就认为是同源 —— <b>没有 CORS，没有预检，连 Cookie 都省心</b>。<br>
+      这也是为什么很多前端项目在 nginx 里配 <code>proxy_pass</code>。
+    </div>
+
+    <h3>另一个坑：凭证请求不能用通配符</h3>
+    <p class="hint">
+      如果请求带了 Cookie（<code>credentials: 'include'</code>），
+      服务端<b>不能</b>回 <code>Access-Control-Allow-Origin: *</code>，
+      必须回具体的源，并且加 <code>Access-Control-Allow-Credentials: true</code>。
+      这个报错信息很不直观，很多人卡在这里。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function run() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  const before = performance.getEntriesByType('resource').length;
+
+  for (let i = 1; i <= 3; i++) {
+    const t0 = performance.now();
+    const r = await fetch('/api/cors/simple');     // ← 不带自定义头
+    await r.json();
+    labLog(`第 ${i} 次请求完成，HTTP ${r.status}，耗时 ${(performance.now() - t0).toFixed(0)}ms`);
+  }
+
+  const entries = performance.getEntriesByType('resource').slice(before)
+    .filter(e => e.name.includes('/api/cors/'));
+  labLog('');
+  labLog(`本次共产生 ${entries.length} 条网络记录`);
+  labLog('--- 对比问题版：没有 OPTIONS 预检，往返次数减半 ---');
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

@@ -11,7 +11,7 @@
 | 演练场 | 练什么 | 入口 |
 |---|---|---|
 | [jvm-lab](jvm-lab/) | JVM 现象：OOM、GC 行为、死锁、堆/线程 dump 分析 | `cd jvm-lab && ./lab.sh start` |
-| web-perf-lab 🚧 | Chrome DevTools：Network / Performance 面板实战、动态 JS 替换 | 建设中 |
+| [web-perf-lab](web-perf-lab/) | Chrome DevTools：Network / Performance 面板实战、动态 JS 替换 | `cd web-perf-lab && ./lab.sh start` |
 
 ---
 
@@ -41,19 +41,34 @@ cd jvm-lab
 
 ---
 
-## web-perf-lab 🚧 建设中
+## web-perf-lab
 
-面向 Chrome DevTools 的实战演练场。计划 14 个场景，每个都有**问题版 / 优化版**两个独立页面，
+面向 Chrome DevTools 的实战演练场。**14 个场景，每个都有问题版 / 优化版两个独立页面**，
 可以开两个标签页并排对比 Network 和 Performance 面板。
 
-**Network 面板**：串行 vs 并行请求、缓存策略（强缓存 / 协商缓存 / 无缓存）、
-压缩、渲染阻塞 JS、图片优化与 CLS、CORS 预检、慢 TTFB 与重定向链
+每个场景页左侧都有一份「**观察清单**」：在哪个面板、点哪里、应该看到什么、
+预期数字是多少。不是"自己摸索"，是"照着验证"。
 
-**Performance 面板**：长任务、布局抖动（强制同步布局）、未节流的事件监听、
-内存泄漏（detached DOM）、`top/left` vs `transform` 动画
+**Network 面板（7 个）**：串行 vs 并行请求、缓存策略（强缓存 / 协商缓存 / 无缓存）、
+响应压缩、渲染阻塞 JS、图片与 CLS、CORS 预检、慢 TTFB 与重定向链
 
-**JS 调试**：动态 JS 替换（Local Overrides）、断点全家桶
-（条件断点 / 日志点 / DOM 断点 / XHR 断点 / 事件监听断点 / Blackboxing）
+**Performance 面板（5 个）**：长任务阻塞主线程、布局抖动（强制同步布局）、
+未节流的事件监听、内存泄漏（Detached DOM）、`left/top` vs `transform` 动画
+
+**JS 调试（2 个）**：动态 JS 替换（Local Overrides）、断点全家桶
+（条件断点 / 日志点 / DOM 断点 / Fetch 断点 / 事件监听断点 / Blackboxing）
+
+```bash
+cd web-perf-lab
+./lab.sh start
+./lab.sh ui       # 访问方式
+./lab.sh routes   # 全部场景 URL
+```
+
+服务端**零 npm 依赖**，只用 Node 内置模块 —— 演练场是拿来练 DevTools 的，
+服务端越透明越好，你能一口气读完 `server.js`。
+
+详见 [web-perf-lab/README.md](web-perf-lab/README.md)。
 
 ---
 

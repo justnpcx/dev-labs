@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>动画属性选择 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  #mover {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 64px; height: 64px;
+    background: var(--red);
+    border-radius: 8px;
+  }
+  #track {
+    position: relative;
+    height: 90px;
+    background: #0b0f14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>用 left / top 做动画</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/animate/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>先打开 <b>Rendering</b> 面板（<code>Ctrl+Shift+P</code> → 输入 "Rendering"）</li>
+      <li>勾上 <b>Paint flashing</b>（绿框闪烁 = 重绘了）</li>
+      <li>再勾上 <b>Layer borders</b>（橙色边框 = 独立合成层）</li>
+      <li>点「开始动画」—— 注意方块<b>全程都在闪绿框</b>，而且没有橙色边框</li>
+      <li>打开 <b>Performance</b> 面板录制，看 Main 轨道上<b>每帧都有 Layout + Paint</b></li>
+      <li>去优化版做同样的操作对比</li>
+    </ol>
+    <div class="expect">
+      预期：每一帧都触发 <b>Layout → Paint → Composite</b><br>
+      Performance 里 Main 轨道被紫色(Layout)和绿色(Paint)填满
+    </div>
+    <div class="warn">
+      <b>为什么 left/top 这么贵</b><br>
+      浏览器渲染一帧分几步：
+      <pre style="margin:8px 0 0;font-size:12px">JS → Style → Layout → Paint → Composite</pre>
+      <code>left</code> / <code>top</code> 是<b>布局属性</b> ——
+      改它意味着这个元素的位置变了，<b>Layout 必须重算</b>。
+      如果它旁边还有别的元素（可能被挤动），Layout 的范围还会扩大。<br><br>
+      而 <code>transform</code> 是<b>合成属性</b> ——
+      它只影响这个元素自己的绘制结果，<b>不改变布局</b>，
+      浏览器可以直接交给 GPU 在合成阶段处理，连重绘都不需要。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="start()">开始动画</button>
+      <button onclick="stop()">停止</button>
+      <span class="hint" id="status">点一下开始，注意 Paint flashing 的绿框</span>
+    </div>
+
+    <div id="track"><div id="mover"></div></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题代码</h3>
+    <pre class="logbox">function tick() {
+  const t = (Date.now() % 2000) / 2000;
+  const x = t * 400;
+
+  mover.style.left = x + 'px';    // ❌ 布局属性 → 每帧重算 Layout
+  mover.style.top  = (Math.sin(t * 6) * 10) + 'px';   // ❌ 再来一次
+
+  requestAnimationFrame(tick);
+}</pre>
+
+    <h3>哪些属性会触发什么</h3>
+    <table>
+      <tr><th>属性</th><th>触发</th><th>开销</th></tr>
+      <tr>
+        <td class="mono">width, height,<br>padding, margin,<br>left, top, font-size</td>
+        <td>Layout + Paint + Composite</td>
+        <td><b style="color:#ffb4ae">最高</b></td>
+      </tr>
+      <tr>
+        <td class="mono">color, background,<br>box-shadow, border-radius</td>
+        <td>Paint + Composite</td>
+        <td>中</td>
+      </tr>
+      <tr>
+        <td class="mono">transform, opacity,<br>filter</td>
+        <td>Composite</td>
+        <td><b style="color:#7ee787">最低</b></td>
+      </tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      <b>记法</b>：能让元素"看起来变了但位置尺寸没变"的属性，
+      通常都能走合成。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+let rafId = null;
+let frames = 0;
+let t0 = 0;
+
+function tick() {
+  const t = (Date.now() % 2000) / 2000;
+  const x = t * (document.getElementById('track').clientWidth - 64);
+
+  const mover = document.getElementById('mover');
+  mover.style.left = x + 'px';                              // ❌ 触发布局
+  mover.style.top = (Math.sin(t * 6) * 10 + 10) + 'px';     // ❌ 又触发一次
+
+  frames++;
+  rafId = requestAnimationFrame(tick);
+}
+
+function start() {
+  if (rafId) return;
+  frames = 0; t0 = performance.now();
+  document.getElementById('status').textContent = '动画中…看绿框';
+  rafId = requestAnimationFrame(tick);
+
+  clearTimeout(window.__stopTimer);
+  window.__stopTimer = setTimeout(() => {
+    if (rafId) {
+      const fps = frames / ((performance.now() - t0) / 1000);
+      labLog(`跑了 ${frames} 帧，平均 ${fps.toFixed(1)} fps`);
+      labLog('每帧都在改 left/top —— 去 Performance 面板数 Layout 块的数量');
+    }
+  }, 3000);
+}
+
+function stop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  document.getElementById('status').textContent = '已停止';
+  labLog(`共 ${frames} 帧，每帧触发一次 Layout`);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>串行请求 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>串行请求</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/waterfall/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Network</b> 面板，勾上 <b>Disable cache</b></li>
+      <li>点下面的「开始加载」，观察 Waterfall 列</li>
+      <li>看这 7 个 <code>/api/item/*</code> 是不是排成一条<b>阶梯</b>（一个接一个）</li>
+      <li>看底部 <b>Summary</b> 的 <code>Finish</code> 时间</li>
+      <li>点任意一个请求 → <b>Timing</b> 标签，看 <code>Stalled</code> 那段有多长</li>
+    </ol>
+    <div class="expect">
+      预期：Finish ≈ <b>2.1 秒</b>（7 × 300ms 相加）<br>
+      每个请求的 Stalled 都很长 —— 它在<b>等上一个请求结束</b>，不是在等服务器。
+    </div>
+    <div class="warn">
+      <b>这是最容易被误判的坑。</b><br>
+      看到 Stalled 很长，很多人会以为"服务器慢"或"网络慢"，
+      其实服务器每个只花了 300ms —— 剩下 1.8 秒全是在排队等前一个。
+      这就是为什么必须看 Waterfall 而不是只看总时长。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="load()">开始加载</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>为什么是串行</h3>
+    <p class="hint">
+      下面这段代码里，<code>await</code> 写在 <code>for</code> 循环内 ——
+      每次循环都必须等上一个请求<b>完全结束</b>才会发起下一个。
+    </p>
+    <pre class="logbox">for (let i = 1; i &lt;= 7; i++) {
+  const r = await fetch('/api/item/' + i);   // ← await 卡住了整个循环
+  results.push(await r.json());
+}</pre>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function load() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '加载中…';
+  const t0 = performance.now();
+
+  const results = [];
+  for (let i = 1; i <= 7; i++) {
+    const t = performance.now();
+    const r = await fetch('/api/item/' + i);      // ← 串行的根源
+    results.push(await r.json());
+    labLog(`第 ${i} 个完成，耗时 ${(performance.now() - t).toFixed(0)}ms`);
+  }
+
+  const total = performance.now() - t0;
+  status.textContent = `全部完成，总耗时 ${total.toFixed(0)}ms`;
+  labLog(`--- 总计 ${total.toFixed(0)}ms（7 个请求相加）---`);
+}
+</script>
+</body>
+</html>

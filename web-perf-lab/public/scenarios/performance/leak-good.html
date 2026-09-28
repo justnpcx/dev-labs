@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>内存泄漏 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>不持有引用 + 主动清理</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/leak/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Memory</b> 面板，先拍一次堆快照做基线</li>
+      <li>点 5 次「创建并移除 100 个节点」</li>
+      <li>点 Memory 面板左上角的<b>垃圾桶图标</b>（Collect garbage）</li>
+      <li>再拍一次堆快照</li>
+      <li>筛选 <b>Detached</b> —— 应该是<b>空的</b>，或者只有个位数</li>
+      <li>对比问题版：那边 GC 完还是几百个 Detached</li>
+    </ol>
+    <div class="expect">
+      预期：<b>Detached 节点数回到基线</b><br>
+      堆大小在 GC 后回落 —— 说明这些节点真的被回收了。
+    </div>
+
+    <h3 style="margin-top:18px">四种泄漏对应的正确写法</h3>
+    <table>
+      <tr><th>泄漏</th><th>正确做法</th></tr>
+      <tr>
+        <td>事件监听没解绑</td>
+        <td class="mono">AbortController</td>
+      </tr>
+      <tr>
+        <td>定时器没清</td>
+        <td class="mono">clearInterval</td>
+      </tr>
+      <tr>
+        <td>缓存只增不减</td>
+        <td class="mono">WeakMap / LRU</td>
+      </tr>
+      <tr>
+        <td>闭包捕获大对象</td>
+        <td>只传需要的字段</td>
+      </tr>
+    </table>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="noLeak()">创建并移除 100 个节点</button>
+      <button onclick="demoAbort()">演示 AbortController 解绑</button>
+      <button onclick="reset()">重置计数器</button>
+    </div>
+    <pre id="log">等待操作…</pre>
+
+    <h3>当前状态</h3>
+    <table>
+      <tr><th>指标</th><th>值</th></tr>
+      <tr><td>被 JS 引用着的已移除节点</td><td class="mono" id="retained">0</td></tr>
+      <tr><td>JS 堆已用</td><td class="mono" id="heap">—</td></tr>
+    </table>
+
+    <h3>改法一：用完就不留引用</h3>
+    <pre class="logbox">function createAndRemove() {
+  const container = document.getElementById('stage');
+
+  for (let i = 0; i &lt; 100; i++) {
+    const node = document.createElement('div');
+    node.textContent = '...';
+
+    // ✅ 用 AbortController 管理监听器，随时能一次性全部解绑
+    node.addEventListener('click', handler, { signal: controller.signal });
+
+    container.appendChild(node);
+    container.removeChild(node);
+    // ✅ 不往任何长期存活的地方存引用 —— 出了这个作用域就能被回收
+  }
+}</pre>
+
+    <h3>改法二：AbortController（现代解绑方式）</h3>
+    <pre class="logbox">const controller = new AbortController();
+
+// 一次性挂多个监听
+window.addEventListener('scroll', onScroll, { signal: controller.signal });
+window.addEventListener('resize', onResize, { signal: controller.signal });
+document.addEventListener('click', onClick, { signal: controller.signal });
+
+// 组件卸载时，一行全部解绑
+controller.abort();</pre>
+    <p class="hint">
+      以前要一个个 <code>removeEventListener</code>，还得保证函数引用一致，
+      很容易漏。<code>AbortController</code> 是<b>一把全解</b>，
+      漏不掉 —— 尤其适合一个组件挂了十几个监听的场景。
+    </p>
+
+    <h3>改法三：WeakMap 做缓存</h3>
+    <pre class="logbox">// ❌ Map：key 被强引用，对象永远不释放
+const cache = new Map();
+cache.set(domNode, computedValue);
+
+// ✅ WeakMap：key 是弱引用，domNode 被回收时条目自动消失
+const cache = new WeakMap();
+cache.set(domNode, computedValue);</pre>
+
+    <h3>改法四：定时器要清</h3>
+    <pre class="logbox">// ❌ 组件卸载了，interval 还在跑，闭包里的 DOM 一直被引用
+setInterval(() =&gt; update(el), 1000);
+
+// ✅ 存下 id，卸载时清掉
+const timer = setInterval(() =&gt; update(el), 1000);
+// 卸载时：
+clearInterval(timer);</pre>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>怎么定位"是谁在引用"</b><br>
+      堆快照里选中一个 Detached 节点 → 底部 <b>Retainers</b> 面板
+      → 展开引用链，一直往上找。<br>
+      最后那条链的顶端通常就是罪魁祸首：某个全局数组、某个没解绑的监听器、
+      或者某个还在跑的定时器。<br>
+      <b>Retainers 面板是定位内存泄漏的核心工具</b>，比看堆大小有用得多。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+let ops = 0;
+let retainedCount = 0;      // 只用于显示，不是真的引用
+const controller = new AbortController();
+
+function noLeak() {
+  const stage = document.getElementById('stage');
+  const local = [];         // ✅ 局部数组，函数返回后就可回收
+
+  for (let i = 0; i < 100; i++) {
+    const node = document.createElement('div');
+    node.textContent = '占位内容用于撑大节点内存'.repeat(50);
+    // ✅ 用 signal 挂监听，随时能一把解绑
+    node.addEventListener('click', () => {}, { signal: controller.signal });
+
+    stage.appendChild(node);
+    stage.removeChild(node);
+
+    local.push(node);
+  }
+
+  ops++;
+  // local 在这里离开作用域 —— 里面 100 个节点没有任何人再引用
+  labLog(`已创建并移除 100 个节点（第 ${ops} 次）`);
+  labLog('这些节点没有任何长期引用，下次 GC 就会被回收');
+  labLog('--- 去 Memory 面板点垃圾桶，再拍快照，筛 Detached 应该接近 0 ---');
+  update();
+}
+
+function demoAbort() {
+  labLog('AbortController.abort() 会一次性解绑所有用它的 signal 挂的监听');
+  labLog('当前 controller 状态: ' + (controller.signal.aborted ? '已解绑' : '生效中'));
+}
+
+function reset() {
+  ops = 0;
+  retainedCount = 0;
+  document.getElementById('log').textContent = '已重置';
+  update();
+}
+
+function update() {
+  document.getElementById('retained').textContent = retainedCount;
+  const m = performance.memory;
+  document.getElementById('heap').textContent = m
+    ? (m.usedJSHeapSize / 1024 / 1024).toFixed(1) + ' MB'
+    : '（这个浏览器不支持 performance.memory）';
+}
+
+setInterval(update, 1000);
+update();
+</script>
+</body>
+</html>

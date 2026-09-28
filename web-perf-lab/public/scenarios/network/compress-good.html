@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>响应压缩 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>gzip / brotli 压缩</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/compress/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> 面板，勾上 <b>Disable cache</b></li>
+      <li>点「加载 300KB 脚本」</li>
+      <li>看 <b>Size</b> 列 —— 现在应该是 <code>24 kB / 300 kB</code> 这种形式</li>
+      <li>点开 → Headers → Response Headers 里多了 <code>Content-Encoding: gzip</code></li>
+      <li>看 <b>Request Headers</b> 里的 <code>Accept-Encoding</code> —— 这是浏览器主动告诉服务器"我能解压什么"</li>
+    </ol>
+    <div class="expect">
+      预期：transferSize ≈ <b>24 KB</b>，decodedBodySize ≈ <b>300 KB</b><br>
+      压缩比约 <b>8%</b> —— 传输量降到原来的 1/12。
+    </div>
+
+    <h3 style="margin-top:18px">gzip vs brotli</h3>
+    <table>
+      <tr><th></th><th>gzip</th><th>brotli</th></tr>
+      <tr><td>压缩率</td><td>好</td><td>更好（通常再小 15~20%）</td></tr>
+      <tr><td>浏览器支持</td><td>全支持</td><td>现代浏览器都支持</td></tr>
+      <tr><td>服务端</td><td>到处都有</td><td>需要较新版本</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      这个演练场的服务端会看 <code>Accept-Encoding</code>，
+      优先用 <code>br</code>，不支持才退回 <code>gzip</code>。
+    </p>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="load()">加载 300KB 脚本</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>服务端怎么做的</h3>
+    <pre class="logbox">const accept = req.headers['accept-encoding'] || '';
+
+if (accept.includes('br')) {
+  body = zlib.brotliCompressSync(body);
+  headers['Content-Encoding'] = 'br';
+} else if (accept.includes('gzip')) {
+  body = zlib.gzipSync(body);
+  headers['Content-Encoding'] = 'gzip';
+}
+
+// 重要：告诉缓存层"这个响应随 Accept-Encoding 变化"
+headers['Vary'] = 'Accept-Encoding';</pre>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b><code>Vary: Accept-Encoding</code> 很容易漏，漏了会出事故。</b><br>
+      它告诉 CDN / 代理："同一个 URL，对不同 Accept-Encoding 的请求，
+      响应内容不一样，别混着缓存。"<br>
+      不加的话，CDN 可能把 gzip 版本缓存下来，返回给一个不支持 gzip 的客户端，
+      对方拿到的就是乱码。
+    </div>
+
+    <h3>还有一个容易踩的坑</h3>
+    <p class="hint">
+      <b>别对已经压缩过的格式再压缩。</b>JPEG / PNG / WebP / MP4 / ZIP
+      内部已经没有冗余，gzip 一遍不仅省不了多少，还白白烧 CPU。<br>
+      服务端一般按 Content-Type 白名单来开压缩：
+      <code>text/*</code>、<code>application/json</code>、
+      <code>application/javascript</code>、<code>image/svg+xml</code> 开；
+      图片视频关。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function load() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '加载中…';
+
+  const url = '/assets/gzip/big.js';
+  const t0 = performance.now();
+  const r = await fetch(url);
+  const text = await r.text();
+  const cost = performance.now() - t0;
+  const e = performance.getEntriesByName(location.origin + url).pop();
+
+  labLog(`HTTP ${r.status}  Content-Encoding: ${r.headers.get('content-encoding') || '(无)'}`);
+  labLog(`走网络字节 transferSize  = ${e.transferSize.toLocaleString()}`);
+  labLog(`解压后字节 decodedBody   = ${e.decodedBodySize.toLocaleString()}`);
+  labLog(`压缩比 = ${(e.transferSize / e.decodedBodySize * 100).toFixed(1)}%`);
+  labLog(`耗时 ${cost.toFixed(0)}ms，内容长度 ${text.length} 字符`);
+  status.textContent = '完成';
+  labLog('');
+  labLog('--- 对比问题版的 100%（完全不压缩）---');
+}
+</script>
+</body>
+</html>

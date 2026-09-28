@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>未节流的事件监听 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>rAF 节流 + 读写分离</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/listener/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Performance</b> 面板录制</li>
+      <li>在下面滚动区域快速滚动几秒</li>
+      <li>停止录制，看 Main 轨道 —— 现在应该是<b>稀疏的、规律的小任务</b></li>
+      <li>看「回调触发次数」vs「实际执行次数」两个计数器</li>
+      <li>对比问题版：触发几百次 → 这里触发几百次但<b>只执行几十次</b></li>
+    </ol>
+    <div class="expect">
+      预期：<b>触发次数不变，执行次数降到约 1/10</b><br>
+      每帧最多执行一次，多余的调用被"合并"掉了。
+    </div>
+
+    <h3 style="margin-top:18px">三种节流方式对比</h3>
+    <table>
+      <tr><th>方式</th><th>特点</th><th>适合</th></tr>
+      <tr>
+        <td class="mono">rAF</td>
+        <td>与渲染帧对齐，最平滑</td>
+        <td>视觉相关的更新</td>
+      </tr>
+      <tr>
+        <td class="mono">setTimeout</td>
+        <td>固定间隔，与帧无关</td>
+        <td>非视觉逻辑（如埋点）</td>
+      </tr>
+      <tr>
+        <td class="mono">ResizeObserver</td>
+        <td>浏览器主动通知，不用监听</td>
+        <td>尺寸变化</td>
+      </tr>
+    </table>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="row">
+      <span class="hint">事件触发：</span>
+      <span class="mono" id="fired" style="color:var(--yellow)">0</span>
+      <span class="hint">实际执行：</span>
+      <span class="mono" id="ran" style="color:var(--green)">0</span>
+      <button onclick="reset()">清零</button>
+    </div>
+
+    <div id="scrollArea" style="height:260px;overflow-y:scroll;border:1px solid var(--border);
+         border-radius:8px;background:#0b0f14">
+      <div style="height:2000px;padding:14px;color:var(--dim);font-size:13px">
+        ↕ 在这里快速上下滚动<br><br>
+        这次滚动事件照样触发几百次，但重活<b>每帧只干一次</b>。<br><br>
+        对比两个计数器的差距 —— 那个差距就是你省下来的 CPU。
+      </div>
+    </div>
+
+    <pre id="log">在这个区域滚动试试</pre>
+
+    <h3>优化后的代码</h3>
+    <pre class="logbox">let ticking = false;
+
+area.addEventListener('scroll', () =&gt; {
+  fired++;                              // 事件照样触发很多次
+  if (ticking) return;                  // 已经排好队了，直接跳过
+  ticking = true;
+
+  requestAnimationFrame(() =&gt; {
+    const top = area.scrollTop;         // 只在帧开始时读一次
+
+    for (let i = 0; i &lt; items.length; i++) {
+      items[i].style.transform = `translateY(${top * 0.1}px)`;
+    }
+    ran++;
+    ticking = false;                    // 允许下一帧再排队
+  });
+});</pre>
+
+    <h3>为什么这样就够了</h3>
+    <p class="hint">
+      浏览器一帧最多渲染一次。你在两次渲染之间算 100 遍，
+      用户看到的还是最后一次的结果 —— <b>前 99 遍纯属浪费</b>。<br><br>
+      <code>requestAnimationFrame</code> 的回调会在<b>下一次渲染前</b>执行，
+      所以它天然就是"每帧一次"的节拍器。
+    </p>
+
+    <h3>再加一层：读写分离</h3>
+    <pre class="logbox">// 读和写分别放到不同阶段，避免强制同步布局
+requestAnimationFrame(() =&gt; {
+  const top = area.scrollTop;              // 帧内只读一次
+  requestAnimationFrame(() =&gt; {
+    items.forEach(el =&gt; el.style.transform = `...`);  // 再统一写
+  });
+});</pre>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>还有一个更彻底的方案</b><br>
+      如果只是做"跟随滚动"的视觉效果，根本不需要 JS：
+      用 CSS 的 <code>position: sticky</code>、
+      <code>scroll-driven animations</code>（<code>animation-timeline: scroll()</code>）
+      或者把元素提升到合成层（<code>will-change: transform</code>），
+      浏览器会在<b>合成线程</b>上处理，主线程完全不参与。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+let fired = 0, ran = 0, ticking = false;
+const items = [];
+
+onLoad(() => {
+  const area = document.getElementById('scrollArea');
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden';
+  for (let i = 0; i < 200; i++) {
+    const d = document.createElement('div');
+    holder.appendChild(d);
+    items.push(d);
+  }
+  area.appendChild(holder);
+});
+
+function reset() {
+  fired = 0; ran = 0;
+  document.getElementById('fired').textContent = '0';
+  document.getElementById('ran').textContent = '0';
+  document.getElementById('log').textContent = '已清零，继续滚动';
+}
+
+const area = document.getElementById('scrollArea');
+
+// ✅ rAF 节流：事件触发很多次，但每帧最多执行一次
+area.addEventListener('scroll', () => {
+  fired++;
+  document.getElementById('fired').textContent = fired;
+
+  if (ticking) return;              // 本帧已经排过队了
+  ticking = true;
+
+  requestAnimationFrame(() => {
+    const top = area.scrollTop;     // 帧内只读一次
+    for (let i = 0; i < items.length; i++) {
+      items[i].style.transform = `translateY(${top * 0.1}px)`;
+    }
+    ran++;
+    document.getElementById('ran').textContent = ran;
+    ticking = false;
+  });
+}, { passive: true });
+
+let idleTimer = null;
+area.addEventListener('scroll', () => {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (fired > 0) {
+      labLog(`触发 ${fired} 次，实际执行 ${ran} 次`);
+      labLog(`省掉了 ${fired - ran} 次无用计算（${((1 - ran / fired) * 100).toFixed(0)}%）`);
+    }
+  }, 400);
+}, { passive: true });
+</script>
+</body>
+</html>

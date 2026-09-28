@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>动态 JS 替换（Local Overrides）</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge info">练习</span>
+  <h1>动态 JS 替换</h1>
+  <span class="spacer"></span>
+  <span class="hint">不改服务器代码，在浏览器里改线上 JS</span>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>练习步骤</h2>
+    <ol>
+      <li>打开 <b>Sources</b> 面板 → 左侧切到 <b>Overrides</b> 标签</li>
+      <li>点 <b>Select folder for overrides</b>，选一个本地空文件夹，授权</li>
+      <li>回到 <b>Page</b> 标签，展开 <code>localhost:8082</code> →
+          <code>assets</code> → 找到 <code>override-demo.js</code></li>
+      <li>双击打开，找到 <code>discountRate: 0.1</code> 这一行</li>
+      <li>改成 <code>discountRate: 0.25</code></li>
+      <li>按 <code>Ctrl+S</code> 保存 —— 文件名旁边会出现一个<b>紫色圆点</b></li>
+      <li>回到这个页面按 <code>Ctrl+Shift+R</code> 硬刷新</li>
+      <li><b>价格应该变成 ¥150</b>，而且服务器上的文件一个字节都没动</li>
+    </ol>
+    <div class="expect">
+      验证：改完后用 <code>curl</code> 看服务端文件，应该还是 <b>0.1</b>：
+      <pre style="margin:6px 0 0;font-size:11px">curl -s localhost:8082/assets/override-demo.js | grep discountRate</pre>
+    </div>
+    <div class="warn">
+      <b>为什么要用这个</b><br>
+      · 线上出 bug 时，直接改服务器代码风险大、要走发布流程<br>
+      · 用 Overrides 可以在<b>本地浏览器里验证修复方案</b>，确认有效再提交<br>
+      · 也能拿来临时改接口返回、改样式、绕过前端校验做调试<br><br>
+      <b>注意</b>：Overrides 只影响你自己的浏览器，
+      对真实用户和其他同事<b>没有任何影响</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>当前结果（来自服务器上的 override-demo.js）</h2>
+    <div id="result" style="margin-bottom:16px">加载中…</div>
+
+    <div class="row">
+      <button onclick="reload()">重新执行脚本</button>
+      <button onclick="showSource()">看服务端原始文件</button>
+      <span class="hint" id="status"></span>
+    </div>
+
+    <pre id="log">在 Console 里也能看到每次计算的记录</pre>
+
+    <h3>练习目标</h3>
+    <table>
+      <tr><th></th><th>折扣率</th><th>折后</th><th>最终价</th></tr>
+      <tr>
+        <td>现在（有 bug）</td>
+        <td class="mono" style="color:#ffb4ae">0.1</td>
+        <td class="mono">180</td>
+        <td class="mono">160</td>
+      </tr>
+      <tr>
+        <td>改完后应该是</td>
+        <td class="mono" style="color:#7ee787">0.25</td>
+        <td class="mono">150</td>
+        <td class="mono">150</td>
+      </tr>
+    </table>
+
+    <h3>除了 JS，还能替换什么</h3>
+    <table>
+      <tr><th>类型</th><th>典型用途</th></tr>
+      <tr>
+        <td>JS</td>
+        <td>本地验证 bug 修复、加调试日志、绕过前端校验</td>
+      </tr>
+      <tr>
+        <td>CSS</td>
+        <td>调样式不用改代码重新部署，调好了再抄回去</td>
+      </tr>
+      <tr>
+        <td>HTML</td>
+        <td>临时改文案、加测试元素</td>
+      </tr>
+      <tr>
+        <td>接口 JSON</td>
+        <td><b>模拟后端返回</b>，前后端并行开发时特别有用</td>
+      </tr>
+    </table>
+
+    <h3>几个容易卡住的点</h3>
+    <p class="hint">
+      <b>① 改了没生效？</b><br>
+      检查三件事：文件旁边有没有紫色圆点（没保存）→
+      有没有硬刷新（<code>Ctrl+Shift+R</code>，普通刷新可能用缓存）→
+      Overrides 文件夹是不是被取消了授权。<br><br>
+      <b>② 找不到文件？</b><br>
+      必须在 <b>Page</b> 标签下按域名展开，不是 Filesystem。
+      有些内联在 HTML 里的脚本没有独立文件，改不了。<br><br>
+      <b>③ 想取消覆盖？</b><br>
+      在 Overrides 面板里右键文件 → <b>Delete</b>，
+      或者把文件夹整个移除。
+    </p>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>和「改完再抄回源码」配合使用</b><br>
+      标准流程是：<br>
+      1. 在 Overrides 里试，确认方案有效<br>
+      2. 把改动抄回本地源码<br>
+      3. 走正常的提交 / 发布流程<br>
+      不要在 Overrides 里"改好了"就以为问题解决了 —— 那只是你自己的浏览器。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script src="/assets/override-demo.js"></script>
+<script>
+function reload() {
+  window.LAB_OVERRIDE.render();
+  labLog(`重新执行：折扣率 ${window.LAB_OVERRIDE.discountRate}，最终价 ¥${window.LAB_OVERRIDE.calcPrice()}`);
+}
+
+async function showSource() {
+  const r = await fetch('/assets/override-demo.js?t=' + Date.now());
+  const text = await r.text();
+  const line = text.split('\n').find(l => l.includes('discountRate'));
+  labLog('服务端文件里的那一行：' + line.trim());
+  labLog('（Overrides 只改你浏览器里的副本，这里读到的永远是原始值）');
+}
+
+onLoad(() => {
+  labLog('页面加载完成，当前最终价 = ¥' + window.LAB_OVERRIDE.calcPrice());
+  labLog('去 Sources → Overrides 把 discountRate 改成 0.25，然后硬刷新');
+});
+</script>
+</body>
+</html>

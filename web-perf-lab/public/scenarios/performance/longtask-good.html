@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长任务阻塞主线程 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>切片让出主线程</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/longtask/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>同样的心跳计数器 —— 现在点按钮，它<b>不会停</b>，只是变慢一点</li>
+      <li><b>Performance</b> 面板录制，点「切片执行 800ms 工作量」</li>
+      <li>看 Main 轨道 —— 不再是<b>一整块</b>长任务，而是一串<b>小片段</b>，中间有间隙</li>
+      <li>每个片段都 &lt;50ms，所以<b>没有红色三角</b></li>
+      <li>对比两种写法的「实际耗时」—— 切片会略慢一点，但页面始终可交互</li>
+    </ol>
+    <div class="expect">
+      预期：计数器<b>始终在跳</b>，页面全程可点可滚<br>
+      Main 轨道变成一串短任务，Long Task 数量降为 0
+    </div>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>切片不是"更快"，是"更不卡"</b><br>
+      总工作量一样，切片甚至因为调度开销会<b>略慢</b>。
+      换来的是：每一帧之间都留出了让浏览器处理输入和渲染的机会。<br>
+      用户体验的差别远大于那点额外开销。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="row">
+      <span class="hint">心跳计数器：</span>
+      <span class="mono" id="beat" style="font-size:18px;color:var(--green)">0</span>
+    </div>
+
+    <div class="row">
+      <button onclick="runChunked(800)">切片执行 800ms 工作量</button>
+      <button onclick="runWorker(800)">丢给 Web Worker</button>
+      <span class="hint" id="status">点一下试试</span>
+    </div>
+
+    <pre id="log">计数器在跑…点按钮看它还会不会停</pre>
+
+    <h3>方案一：切片 + 让出主线程</h3>
+    <pre class="logbox">async function runChunked(totalMs) {
+  const deadline = Date.now() + totalMs;
+  while (Date.now() &lt; deadline) {
+    const sliceEnd = performance.now() + 16;   // 每次只干 16ms（约一帧）
+    while (performance.now() &lt; sliceEnd) {
+      x += Math.sqrt(x + 1);
+    }
+    // 把控制权交还给浏览器：处理输入、渲染、跑 rAF
+    await new Promise(r =&gt; setTimeout(r, 0));
+  }
+}</pre>
+    <p class="hint">
+      关键就是那个 <code>await setTimeout(0)</code> ——
+      它把长任务<b>切成一串短任务</b>，任务之间浏览器有机会干别的。
+    </p>
+
+    <h3>方案二：Web Worker</h3>
+    <pre class="logbox">// 主线程
+const worker = new Worker('/assets/worker.js');
+worker.postMessage({ ms: 800 });
+worker.onmessage = e =&gt; console.log('结果', e.data);
+
+// worker.js（跑在另一条线程，完全不碰主线程）
+onmessage = e =&gt; {
+  const deadline = Date.now() + e.data.ms;
+  let x = 0;
+  while (Date.now() &lt; deadline) x += Math.sqrt(x + 1);
+  postMessage(x);
+};</pre>
+    <p class="hint">
+      Worker 是<b>真正并行</b>的 —— 主线程一点不受影响，连一次让步都不用。
+      代价是：不能直接操作 DOM，数据要通过 <code>postMessage</code> 传递（有序列化开销）。
+    </p>
+
+    <h3>怎么选</h3>
+    <table>
+      <tr><th>方案</th><th>适合</th><th>代价</th></tr>
+      <tr><td>切片 + 让出</td><td>需要操作 DOM 的批处理</td><td>总耗时略增</td></tr>
+      <tr><td>Web Worker</td><td>纯计算（解析、加密、图像处理）</td><td>不能碰 DOM</td></tr>
+      <tr><td><code>requestIdleCallback</code></td><td>不紧急的后台任务</td><td>时机不可控，可能不执行</td></tr>
+      <tr><td>拆成多次交互</td><td>本来就能让用户分步完成</td><td>改产品交互</td></tr>
+    </table>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+let beats = 0;
+setInterval(() => {
+  document.getElementById('beat').textContent = ++beats;
+}, 50);
+
+// 切片版：每 16ms 让出一次
+async function runChunked(totalMs) {
+  const status = document.getElementById('status');
+  status.textContent = '切片执行中…（页面应该保持可交互）';
+  const t0 = performance.now();
+  const deadline = Date.now() + totalMs;
+  let x = 0, slices = 0;
+
+  while (Date.now() < deadline) {
+    const sliceEnd = performance.now() + 16;
+    while (performance.now() < sliceEnd) {
+      x += Math.sqrt(x + 1);
+    }
+    slices++;
+    await new Promise(r => setTimeout(r, 0));   // ← 让出主线程
+  }
+
+  window.__LAB_LAST = x;
+  const cost = performance.now() - t0;
+  status.textContent = `完成，共 ${slices} 个切片，总耗时 ${cost.toFixed(0)}ms`;
+  labLog(`切片执行完毕：${slices} 片，总耗时 ${cost.toFixed(0)}ms`);
+  labLog('注意计数器全程没停 —— 每一片之间浏览器都有机会响应用户');
+}
+
+// Worker 版：完全不占主线程
+function runWorker(ms) {
+  const status = document.getElementById('status');
+  status.textContent = 'Worker 计算中…（主线程完全不受影响）';
+  const t0 = performance.now();
+
+  const worker = new Worker('/assets/worker.js');
+  worker.postMessage({ ms });
+  worker.onmessage = (e) => {
+    const cost = performance.now() - t0;
+    status.textContent = `Worker 完成，总耗时 ${cost.toFixed(0)}ms`;
+    labLog(`Worker 返回结果，总耗时 ${cost.toFixed(0)}ms`);
+    labLog('主线程一次都没被阻塞 —— Performance 面板的 Main 轨道上找不到任何长任务');
+    worker.terminate();
+  };
+}
+</script>
+</body>
+</html>

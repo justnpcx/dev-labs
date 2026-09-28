@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>渲染阻塞 JS · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<!-- 同一个文件，只加了一个 defer。
+     浏览器会「边下载边继续解析 HTML」，等 HTML 解析完再按顺序执行。 -->
+<script src="/assets/block.js" defer></script>
+</head>
+<body>
+
+<div style="background:#1f4d29;color:#7ee787;padding:14px 20px;font-size:14px">
+  ✓ 这句话应该<b>立刻</b>出现，没有白屏。<br>
+  脚本还在下载执行，但它<b>不挡着页面渲染了</b>。
+</div>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>defer / async</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/blocking/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>按 <code>Ctrl+Shift+R</code> 硬刷新 —— <b>首屏应该立刻出现</b>，不白屏</li>
+      <li><b>Network</b> 面板再刷新：<code>block.js</code> 的下载和 HTML 解析<b>并行</b>了</li>
+      <li>看 <code>DOMContentLoaded</code> —— 现在应该很小（几十毫秒）</li>
+      <li>但注意：<b>Load 事件仍然要等 1.5 秒</b>（脚本还是要执行完）</li>
+      <li>Performance 面板录制：Main 轨道上那块长任务<b>还在</b>，只是挪到了后面</li>
+    </ol>
+    <div class="expect">
+      预期：<code>DOMContentLoaded</code> ≈ <b>50ms</b>（问题版是 1500ms+）<br>
+      首屏立刻可见 —— <b>但主线程仍然被占 1.5 秒</b>。
+    </div>
+    <div class="warn" style="background:#2d1a1b;border-color:var(--red);color:#ffb4ae">
+      <b>defer 只解决了"白屏"，没解决"卡"。</b><br>
+      脚本执行时主线程照样被占满 1.5 秒，这期间<b>点击、输入、滚动都没响应</b>。
+      真正要治的是那个忙等本身 —— 见 Performance 面板的「长任务」场景。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>时间线</h2>
+    <div class="row">
+      <button onclick="location.reload()">重新加载（应该不白屏）</button>
+    </div>
+    <div id="metrics"></div>
+    <pre id="log">页面已加载</pre>
+
+    <h3>三种引入方式的区别</h3>
+    <table>
+      <tr><th>写法</th><th>下载</th><th>执行时机</th><th>阻塞解析</th></tr>
+      <tr>
+        <td class="mono">&lt;script&gt;</td>
+        <td>立即</td><td>下载完立刻执行</td>
+        <td><b style="color:#ffb4ae">是</b></td>
+      </tr>
+      <tr>
+        <td class="mono">&lt;script defer&gt;</td>
+        <td>并行</td><td>HTML 解析完后，按顺序</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td class="mono">&lt;script async&gt;</td>
+        <td>并行</td><td>下载完立刻，<b>顺序不定</b></td>
+        <td>否</td>
+      </tr>
+    </table>
+
+    <h3>怎么选</h3>
+    <p class="hint">
+      <b>defer</b>：脚本之间有依赖、或者要操作 DOM 时用。<br>
+      <b>async</b>：完全独立的脚本（统计埋点、广告），谁先下完谁先跑。<br>
+      <b>都不加</b>：基本没有正当理由 —— 除非你就是要它先于页面执行
+      （比如必须在渲染前设置主题色，防止闪白）。<br><br>
+      <b>现代做法</b>：用 <code>type="module"</code>，它<b>默认就是 defer</b>。
+    </p>
+
+    <h3>还能更进一步</h3>
+    <p class="hint">
+      <code>defer</code> 只是"不挡解析"。要让首屏更快，还可以：
+    </p>
+    <table>
+      <tr><th>手段</th><th>作用</th></tr>
+      <tr><td class="mono">rel="preload"</td><td>提前下载关键资源，提高优先级</td></tr>
+      <tr><td class="mono">rel="preconnect"</td><td>提前建连（DNS + TCP + TLS）</td></tr>
+      <tr><td class="mono">代码分割</td><td>首屏只加载必需的，其余按需加载</td></tr>
+      <tr><td class="mono">SSR / 流式渲染</td><td>不等 JS 就有内容</td></tr>
+    </table>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const nav = performance.getEntriesByType('navigation')[0];
+labLog(`DOMContentLoaded ≈ ${(nav.domContentLoadedEventEnd - nav.startTime).toFixed(0)}ms`);
+labLog(`Load 完成 ≈ ${(nav.loadEventEnd - nav.startTime).toFixed(0)}ms  ← 仍然要等脚本执行完`);
+labLog('');
+labLog('--- 对比问题版：DOMContentLoaded 从 1500ms+ 降到几十毫秒 ---');
+</script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>缓存策略 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>强缓存 + 协商缓存</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/cache/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> 面板，<b>不要</b>勾 Disable cache</li>
+      <li>点「请求 3 次」</li>
+      <li>强缓存那组：第 2、3 次 Status 应显示 <code>200 (from disk cache)</code> 或 <code>(memory cache)</code>，<b>Size 列是 0 B</b></li>
+      <li>协商缓存那组：第 2、3 次 Status 是 <code>304</code>，Size 只有几百字节</li>
+      <li>点 304 那条 → Headers → 看 <b>Request Headers 里的 If-None-Match</b></li>
+    </ol>
+    <div class="expect">
+      预期对比：<br>
+      <b>强缓存</b>：transferSize = <b>0</b>，请求<b>根本没发出去</b><br>
+      <b>协商缓存</b>：transferSize &gt; 0（只有响应头），body 不传
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="run()">请求 3 次</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>两种缓存的分工</h3>
+    <table>
+      <tr><th></th><th>强缓存</th><th>协商缓存</th></tr>
+      <tr>
+        <td>响应头</td>
+        <td class="mono">Cache-Control:<br>max-age=31536000</td>
+        <td class="mono">Cache-Control: no-cache<br>+ ETag</td>
+      </tr>
+      <tr><td>有效期内容</td><td>直接用本地副本</td><td>向服务器确认</td></tr>
+      <tr><td>还发请求吗</td><td><b>不发</b></td><td>发，但只传头</td></tr>
+      <tr><td>状态码</td><td>200 (from cache)</td><td>304</td></tr>
+      <tr><td>适合</td><td>带 hash 的静态资源</td><td>HTML、常变的配置</td></tr>
+    </table>
+
+    <h3>为什么这样分工</h3>
+    <p class="hint">
+      <b>强缓存</b>最快（零请求），但问题是"文件改了浏览器不知道"。
+      解决办法是文件名带内容 hash：<code>app.a1b2c3.js</code> ——
+      内容变了文件名就变，等于换了个 URL，缓存自然失效。<br><br>
+      <b>协商缓存</b>每次都要问一趟，但保证拿到最新版。适合 HTML 这种
+      不能带 hash、又必须及时更新的入口文件。
+    </p>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>ETag vs Last-Modified</b><br>
+      ETag 是内容指纹（更强，精确到字节）；Last-Modified 是时间戳
+      （精度只有秒，而且"文件被碰了一下但内容没变"会导致误判）。
+      两个都给的话，浏览器优先用 ETag。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function probe(url, label, times) {
+  for (let i = 1; i <= times; i++) {
+    const r = await fetch(url, { cache: 'default' });
+    const body = await r.text();
+    const e = performance.getEntriesByName(location.origin + url).pop();
+    labLog(
+      `${label} 第 ${i} 次: HTTP ${r.status}  ` +
+      `transferSize=${e.transferSize}  ` +
+      `body=${body.length}B  duration=${e.duration.toFixed(0)}ms`
+    );
+  }
+}
+
+async function run() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  await probe('/assets/cached/app.js', '[强缓存]', 3);
+  labLog('');
+  await probe('/assets/etag/app.js', '[协商缓存]', 3);
+
+  status.textContent = '完成';
+  labLog('');
+  labLog('--- 强缓存 transferSize=0 表示请求压根没发出去 ---');
+  labLog('--- 协商缓存 body=0（304 无 body），但仍有几十字节的响应头 ---');
+}
+</script>
+</body>
+</html>

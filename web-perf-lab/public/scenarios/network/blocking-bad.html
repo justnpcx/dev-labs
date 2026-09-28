@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>渲染阻塞 JS · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<!-- ⚠ 关键：同步 script 放在 head 里，没有任何 defer / async。
+     浏览器解析到这里必须停下来：下载 → 执行 → 才能继续解析后面的 HTML。
+     这个文件故意忙等 1.5 秒，所以首屏会白屏 1.5 秒以上。 -->
+<script src="/assets/block.js"></script>
+</head>
+<body>
+
+<!-- 下面这块是首屏内容。它要等上面那个 script 执行完才会被解析到。
+     刷新页面时注意：白屏多久，这块内容就晚多久出现。 -->
+<div style="background:#5c2223;color:#ffb4ae;padding:14px 20px;font-size:14px">
+  ⚠ 你看到这句话的时刻，就是<b>首屏开始渲染</b>的时刻。<br>
+  如果你刷新后等了 1.5 秒以上才看到它 —— 那就是渲染阻塞。
+</div>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>渲染阻塞 JS</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/blocking/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>按 <code>Ctrl+Shift+R</code> 硬刷新，<b>盯住屏幕</b> —— 会白屏约 1.5 秒</li>
+      <li>打开 <b>Network</b> 面板，再刷新一次</li>
+      <li>找到 <code>block.js</code> 这条，看它的 Waterfall 是不是<b>卡住了后面所有请求</b></li>
+      <li>看底部 Summary：<code>DOMContentLoaded</code> 是不是被推到了 1.5 秒之后</li>
+      <li>切到 <b>Performance</b> 面板录制一次，看 Main 轨道上那块<b>又长又厚的黄色</b>（Scripting）</li>
+    </ol>
+    <div class="expect">
+      预期：<code>DOMContentLoaded</code> ≈ <b>1500ms+</b><br>
+      首屏内容在 1.5 秒后才出现，用户看到的是<b>白屏</b>。
+    </div>
+    <div class="warn">
+      <b>为什么 head 里的同步 script 这么致命</b><br>
+      HTML 解析是<b>单线程</b>的。解析器碰到 <code>&lt;script&gt;</code>（没有 defer/async）时：
+      <ol style="margin:6px 0 0;padding-left:18px">
+        <li>暂停解析</li>
+        <li>下载脚本（网络耗时）</li>
+        <li>执行脚本（CPU 耗时）</li>
+        <li>才继续解析后面的 HTML</li>
+      </ol>
+      第 2、3 步期间，页面是白的 —— 因为后面的 HTML 还没被解析出来。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>时间线</h2>
+    <div class="row">
+      <button onclick="location.reload()">重新加载（观察白屏）</button>
+    </div>
+    <div id="metrics"></div>
+    <pre id="log">页面已加载</pre>
+
+    <h3>问题出在这两行</h3>
+    <pre class="logbox">&lt;head&gt;
+  &lt;link rel="stylesheet" href="/assets/lab.css"&gt;
+  &lt;script src="/assets/block.js"&gt;&lt;/script&gt;   ← 没有 defer / async
+&lt;/head&gt;
+&lt;body&gt;
+  ...首屏内容...                              ← 要等上面执行完才解析
+&lt;/body&gt;</pre>
+
+    <h3>这个脚本里做了什么</h3>
+    <pre class="logbox">const deadline = Date.now() + 1500;
+let x = 0;
+while (Date.now() &lt; deadline) {   // 忙等，占满主线程
+  x += Math.sqrt(x + 1);
+}
+window.__LAB_BLOCK_RESULT = x;    // 防止被 JIT 优化掉</pre>
+    <p class="hint">
+      真实世界里阻塞源通常是：同步的 XHR、巨大的 JS bundle 解析执行、
+      同步的 <code>localStorage</code> 读写、复杂的模板编译。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+// 这段在 body 末尾，所以它执行时说明前面的都解析完了
+const nav = performance.getEntriesByType('navigation')[0];
+labLog(`首屏内容可渲染时间 ≈ ${(nav.domContentLoadedEventEnd - nav.startTime).toFixed(0)}ms`);
+</script>
+</body>
+</html>

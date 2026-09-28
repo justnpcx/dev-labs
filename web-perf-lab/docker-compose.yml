@@ -1,0 +1,35 @@
+services:
+  web-perf-lab:
+    build: .
+    image: web-perf-lab:1.0.0
+    container_name: web-perf-lab
+
+    ports:
+      # 只绑回环。演练场里有故意做慢/做卡的页面，不对外暴露。
+      # 需要公网访问就挂 Cloudflare Tunnel（和 jvm-lab 一样的做法）。
+      - "127.0.0.1:8082:8080"
+
+    # ---- 隔离边界 ----
+    # 虽然这个演练场不吃内存，但"主线程阻塞""大量 DOM""内存泄漏"这些场景
+    # 会实打实吃 CPU 和内存。加上限制，失控时不会拖累宿主。
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 128
+    cpus: "1.0"
+
+    # 最小权限
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    restart: "no"

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CORS 预检 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>每次请求都触发预检</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/cors/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Network</b>，勾 Disable cache</li>
+      <li>点「发 3 次请求」</li>
+      <li>数一下 Network 里出现了几条记录 —— 应该是 <b>6 条</b>，不是 3 条</li>
+      <li>看 Method 列：每个业务请求前面都跟着一个 <code>OPTIONS</code></li>
+      <li>点开 OPTIONS 那条 → Headers，看 <b>Request Headers 里的 Access-Control-Request-Headers</b></li>
+      <li>看 Response Headers 里的 <code>Access-Control-Max-Age</code></li>
+    </ol>
+    <div class="expect">
+      预期：<b>6 次往返</b>（3 × OPTIONS + 3 × GET）<br>
+      每次业务请求都要先花一个 RTT 问"我能发吗"。
+    </div>
+    <div class="warn">
+      <b>为什么会触发预检</b><br>
+      只要请求满足下面<b>任一</b>条件，浏览器就必须先发 OPTIONS：
+      <ul style="margin:6px 0 0;padding-left:18px">
+        <li>Method 不是 GET / HEAD / POST</li>
+        <li>带了<b>自定义请求头</b>（如 <code>X-Lab-Token</code>）</li>
+        <li><code>Content-Type</code> 不是这三种之一：
+          <code>text/plain</code>、<code>multipart/form-data</code>、
+          <code>application/x-www-form-urlencoded</code></li>
+      </ul>
+      问题版故意加了自定义头，所以每次都预检。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="run()">发 3 次请求</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>这个请求为什么触发预检</h3>
+    <pre class="logbox">// 问题版：带了自定义头 X-Lab-Token
+fetch('/api/cors/preflight', {
+  headers: { 'X-Lab-Token': 'abc123' }    // ← 就这一行导致预检
+});
+
+// 浏览器实际发出的：
+// 1) OPTIONS /api/cors/preflight          ← 预检
+//    Access-Control-Request-Headers: x-lab-token
+// 2) GET /api/cors/preflight              ← 真正请求
+//    X-Lab-Token: abc123</pre>
+
+    <h3>预检本身不是问题，重复预检才是</h3>
+    <p class="hint">
+      预检结果是可以缓存的 —— 靠响应头 <code>Access-Control-Max-Age</code>。
+      问题版的服务器把它设成了 <code>0</code>，所以<b>每次都要重新预检</b>。<br><br>
+      生产环境一般设成 <code>600</code>（10 分钟）到 <code>86400</code>（1 天）。
+      注意：<b>Chrome 对这个值有上限</b>（目前 2 小时），设再大也没用。
+    </p>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>什么时候该避免预检</b><br>
+      高频接口（比如轮询、埋点）如果每次都预检，往返次数直接翻倍。
+      能改成简单请求就改 —— 但<b>不要为了省一个 RTT 牺牲安全性</b>。
+      该带鉴权头的还是得带。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function run() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  const before = performance.getEntriesByType('resource').length;
+
+  for (let i = 1; i <= 3; i++) {
+    const t0 = performance.now();
+    const r = await fetch('/api/cors/preflight', {
+      headers: { 'X-Lab-Token': 'abc123' },     // ← 触发预检
+    });
+    await r.json();
+    labLog(`第 ${i} 次业务请求完成，HTTP ${r.status}，耗时 ${(performance.now() - t0).toFixed(0)}ms`);
+  }
+
+  const entries = performance.getEntriesByType('resource').slice(before)
+    .filter(e => e.name.includes('/api/cors/'));
+  const options = entries.filter(e => e.initiatorType === 'fetch');
+  labLog('');
+  labLog(`本次共产生 ${entries.length} 条网络记录`);
+  labLog('（OPTIONS 预检在 Resource Timing 里通常也会记一条，可在 Network 面板里数得更清楚）');
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+/* 前端性能演练场 —— 所有场景页共用样式
+   刻意保持简单：这是个拿来练 DevTools 的地方，
+   页面本身不该成为干扰（除了那些**故意**做慢的场景）。 */
+
+:root {
+  --bg: #0f1419;
+  --panel: #161b22;
+  --panel2: #1c2430;
+  --border: #2a3441;
+  --text: #d7dde5;
+  --dim: #7d8899;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --blue: #58a6ff;
+  --purple: #bc8cff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+a { color: var(--blue); }
+
+code, pre, .mono {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 12.5px;
+}
+
+code {
+  background: var(--panel2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #a9b6c4;
+}
+
+/* ── 顶栏 ── */
+.lab-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.lab-header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.lab-header .back { color: var(--dim); text-decoration: none; font-size: 13px; }
+.lab-header .back:hover { color: var(--text); }
+.lab-header .spacer { flex: 1; }
+
+.badge {
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  border: 1px solid;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge.bad  { color: #ffb4ae; border-color: #5c2223; background: #2d1a1b; }
+.badge.good { color: #7ee787; border-color: #1f4d29; background: #12261a; }
+.badge.info { color: var(--blue); border-color: #1f3d5c; background: #12202e; }
+
+.counterpart {
+  font-size: 13px;
+  text-decoration: none;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2);
+}
+.counterpart:hover { background: #26313f; }
+
+/* ── 布局 ── */
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  gap: 18px;
+}
+@media (min-width: 900px) {
+  .wrap.split { grid-template-columns: 320px 1fr; align-items: start; }
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.card h2 {
+  font-size: 12px;
+  margin: 0 0 12px;
+  color: var(--dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.card h3 { font-size: 14px; margin: 16px 0 8px; }
+.card h3:first-child { margin-top: 0; }
+
+/* ── 观察清单 ── */
+.observe { position: sticky; top: 76px; }
+.observe ol { margin: 0; padding-left: 20px; }
+.observe li { margin-bottom: 9px; }
+.observe li:last-child { margin-bottom: 0; }
+.expect {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #12202e;
+  border-left: 3px solid var(--blue);
+  border-radius: 4px;
+  font-size: 13px;
+  color: #a9b6c4;
+}
+.expect b { color: var(--blue); }
+.warn {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #2d1a1b;
+  border-left: 3px solid var(--red);
+  border-radius: 4px;
+  font-size: 13px;
+  color: #ffb4ae;
+}
+
+/* ── 演示区 ── */
+.demo { min-height: 200px; }
+.demo .row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+button {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+button:hover { background: #26313f; border-color: #3a4757; }
+button:active { transform: translateY(1px); }
+
+#log, .logbox {
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 240px;
+  overflow: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: #a9b6c4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+/* 演示用的方块，方便看 layout / paint */
+.box {
+  width: 60px; height: 60px;
+  background: var(--blue);
+  border-radius: 6px;
+  display: inline-block;
+}
+.box.alt { background: var(--purple); }
+
+/* 会移动的动画元素 */
+#mover {
+  width: 64px; height: 64px;
+  background: var(--green);
+  border-radius: 8px;
+  margin: 10px 0;
+}
+
+/* 图片场景 */
+.imgrow { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.imgrow figure { margin: 0; }
+.imgrow figcaption { font-size: 12px; color: var(--dim); margin-top: 6px; }
+
+/* 占位骨架，用来演示 CLS */
+.skeleton {
+  background: linear-gradient(90deg, #1c2430 25%, #26313f 50%, #1c2430 75%);
+  background-size: 200% 100%;
+  animation: sk 1.2s infinite;
+  border-radius: 6px;
+}
+@keyframes sk { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--dim); font-weight: 600; font-size: 12px; }
+td.mono { font-family: ui-monospace, Consolas, monospace; }
+
+.hint { font-size: 12.5px; color: var(--dim); }
+.hint b { color: var(--text); }

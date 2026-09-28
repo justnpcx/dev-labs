@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>动画属性选择 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  #mover {
+    position: absolute;
+    top: 10px; left: 0;
+    width: 64px; height: 64px;
+    background: var(--green);
+    border-radius: 8px;
+    /* ✅ 提前告诉浏览器"这个元素会动"，让它提前提升为合成层。
+         注意别滥用 —— 层多了会吃显存，用完最好去掉。 */
+    will-change: transform;
+  }
+  #track {
+    position: relative;
+    height: 90px;
+    background: #0b0f14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>用 transform 做动画</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/animate/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Rendering</b> 面板：勾上 <b>Paint flashing</b> 和 <b>Layer borders</b></li>
+      <li>点「开始动画」</li>
+      <li>这次方块<b>不闪绿框</b>（没有重绘），而且有<b>橙色边框</b>（独立合成层）</li>
+      <li><b>Performance</b> 面板录制，看 Main 轨道 —— 应该<b>几乎是空的</b></li>
+      <li>切到 <b>Layers</b> 面板（可能要在 More tools 里找），能看到这个元素被提升成了独立层</li>
+      <li>对比问题版：那边 Main 轨道被 Layout/Paint 填满</li>
+    </ol>
+    <div class="expect">
+      预期：<b>Main 轨道上没有 Layout</b>，动画跑在合成线程上<br>
+      即使主线程被 JS 占住，这个动画<b>照样流畅</b>。
+    </div>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>为什么 transform 能跑在合成线程</b><br>
+      元素被提升为独立合成层后，浏览器会把它<b>预先绘制成一张纹理</b>。
+      移动它只需要 GPU 把这张纹理挪个位置 —— 不需要重新计算布局，
+      也不需要重新绘制。所以主线程忙的时候动画也不卡。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="start()">开始动画</button>
+      <button onclick="stop()">停止</button>
+      <button onclick="startCss()">用纯 CSS 动画（更彻底）</button>
+      <span class="hint" id="status">点一下开始，注意绿框和橙框</span>
+    </div>
+
+    <div id="track"><div id="mover"></div></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动就一行</h3>
+    <pre class="logbox">// ❌ 问题版
+mover.style.left = x + 'px';       // 触发布局
+
+// ✅ 优化版
+mover.style.transform = `translateX(${x}px) translateY(${y}px)`;
+// 只影响合成，不碰布局</pre>
+
+    <h3>三个层次的做法</h3>
+    <table>
+      <tr><th>做法</th><th>主线程参与</th><th>适用</th></tr>
+      <tr>
+        <td class="mono">JS 每帧改 transform</td>
+        <td>要（rAF 回调）</td>
+        <td>需要根据逻辑动态计算位置</td>
+      </tr>
+      <tr>
+        <td class="mono">CSS transition / animation</td>
+        <td><b>不要</b></td>
+        <td>固定的过渡和循环动画</td>
+      </tr>
+      <tr>
+        <td class="mono">Web Animations API</td>
+        <td>只在开始时</td>
+        <td>需要 JS 控制播放，但要流畅</td>
+      </tr>
+    </table>
+
+    <h3>最彻底：交给 CSS</h3>
+    <pre class="logbox">@keyframes slide {
+  from { transform: translateX(0); }
+  to   { transform: translateX(400px); }
+}
+#mover {
+  animation: slide 2s ease-in-out infinite alternate;
+  will-change: transform;
+}
+/* 浏览器会在合成线程上跑这个动画，主线程完全不参与 */</pre>
+
+    <h3>Web Animations API（需要 JS 控制时用）</h3>
+    <pre class="logbox">mover.animate(
+  [{ transform: 'translateX(0)' },
+   { transform: 'translateX(400px)' }],
+  { duration: 2000, iterations: Infinity, direction: 'alternate' }
+);
+// 声明式，由浏览器调度 —— 比手写 rAF 循环更省</pre>
+
+    <div class="warn" style="background:#2d1a1b;border-color:var(--red);color:#ffb4ae">
+      <b>will-change 别滥用</b><br>
+      每个合成层都要占显存。<br>
+      给几十个元素加 <code>will-change: transform</code>，
+      会创建几十个层，显存暴涨，低端设备直接崩。<br>
+      正确做法：<b>动画开始前加，结束后移除</b>；或者只给确实会动的少数元素加。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+let rafId = null, frames = 0, t0 = 0, anim = null;
+
+function tick() {
+  const t = (Date.now() % 2000) / 2000;
+  const x = t * (document.getElementById('track').clientWidth - 64);
+  const y = Math.sin(t * 6) * 10;
+
+  // ✅ 只改 transform：不触发 Layout，不触发 Paint
+  document.getElementById('mover').style.transform =
+    `translateX(${x}px) translateY(${y}px)`;
+
+  frames++;
+  rafId = requestAnimationFrame(tick);
+}
+
+function start() {
+  if (rafId) return;
+  frames = 0; t0 = performance.now();
+  document.getElementById('status').textContent = '动画中…这次应该不闪绿框';
+  rafId = requestAnimationFrame(tick);
+
+  clearTimeout(window.__t);
+  window.__t = setTimeout(() => {
+    if (rafId) {
+      const fps = frames / ((performance.now() - t0) / 1000);
+      labLog(`跑了 ${frames} 帧，平均 ${fps.toFixed(1)} fps`);
+      labLog('Performance 面板的 Main 轨道上应该找不到 Layout');
+    }
+  }, 3000);
+}
+
+function stop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  if (anim) { anim.cancel(); anim = null; }
+  rafId = null;
+  document.getElementById('status').textContent = '已停止';
+  labLog(`共 ${frames} 帧，零次 Layout`);
+}
+
+function startCss() {
+  stop();
+  const mover = document.getElementById('mover');
+  mover.style.transform = '';
+  anim = mover.animate(
+    [{ transform: 'translateX(0)' },
+     { transform: 'translateX(400px)' }],
+    { duration: 2000, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out' }
+  );
+  document.getElementById('status').textContent = 'Web Animations API 播放中';
+  labLog('用 element.animate() 播放 —— 由浏览器调度，主线程不参与');
+  labLog('把 Performance 面板录起来：Main 轨道几乎是空的');
+}
+</script>
+</body>
+</html>

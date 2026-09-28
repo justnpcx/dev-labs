@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图片与 CLS · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  /* 用 CSS 兜底预留空间。即使 HTML 里忘了写宽高，
+     aspect-ratio 也能让浏览器提前知道该留多大地方。 */
+  .reserved {
+    width: 100%;
+    aspect-ratio: 800 / 600;
+    display: block;
+    border-radius: 6px;
+    background: #1c2430;
+  }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>预留尺寸 + 懒加载 + 优先级</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/image/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b>，勾 Disable cache，硬刷新</li>
+      <li>图片 Size 应该是 <b>1.7 KB</b> 左右（对比问题版的 360 KB）</li>
+      <li>看 <b>Priority</b> 列：首屏那张是 <code>High</code>，懒加载那张是 <code>Low</code></li>
+      <li><b>Performance</b> 面板录制，看 Experience 轨道 —— <b>没有 Layout Shift 标记</b></li>
+      <li>滚动到页面下方，注意 Network 面板<b>这时才出现</b>懒加载的请求</li>
+    </ol>
+    <div class="expect">
+      预期：<b>CLS = 0</b>（下面那段文字一动不动）<br>
+      首屏图片 1.7 KB，下方图片在你滚动到附近时才加载。
+    </div>
+
+    <h3 style="margin-top:18px">CLS 的成因排序</h3>
+    <table>
+      <tr><th>原因</th><th>占比</th></tr>
+      <tr><td>图片没写宽高</td><td>最高</td></tr>
+      <tr><td>广告 / 嵌入内容没预留位</td><td>高</td></tr>
+      <tr><td>动态插入的 DOM</td><td>中</td></tr>
+      <tr><td>Web 字体加载后换字</td><td>中</td></tr>
+    </table>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <p class="hint">
+      ↓ 这段文字在整个加载过程中<b>不会移动</b>。刷新几次确认一下。
+    </p>
+
+    <!-- 优化点：
+         1. width/height 齐全 → 浏览器提前知道占位 → CLS = 0
+         2. 渐变图（不加 noise）→ 1.7 KB
+         3. fetchpriority="high" → 明确告诉浏览器这是首屏关键图 -->
+    <img src="/api/image?w=800&h=600"
+         width="800" height="600"
+         fetchpriority="high"
+         class="reserved"
+         alt="优化后的图片">
+
+    <p id="steady" style="background:#1f4d29;color:#7ee787;padding:12px;border-radius:6px">
+      ✓ 我从头到尾都在这个位置，没有动过。
+    </p>
+
+    <div id="metrics"></div>
+
+    <h3>滚动到下面，看懒加载什么时候触发</h3>
+    <p class="hint">
+      下面这张图在首屏之外，加了 <code>loading="lazy"</code> ——
+      浏览器会等你<b>快滚到它附近</b>才发请求。
+    </p>
+
+    <div style="height:60vh;display:flex;align-items:center;justify-content:center;
+                background:#161b22;border:1px dashed var(--border);border-radius:8px;
+                color:var(--dim);font-size:13px">
+      ↓ 往下滚，下面是懒加载的图片
+    </div>
+
+    <img src="/api/image?w=800&h=600&delay=600"
+         width="800" height="600"
+         loading="lazy"
+         class="reserved"
+         alt="懒加载的图片"
+         style="margin-top:20px">
+
+    <pre id="log">等待图片加载…</pre>
+
+    <h3>四个优化点对应什么</h3>
+    <table>
+      <tr><th>写法</th><th>解决什么</th></tr>
+      <tr><td class="mono">width / height</td><td>CLS：提前预留空间</td></tr>
+      <tr><td class="mono">loading="lazy"</td><td>首屏带宽：视口外的图延后加载</td></tr>
+      <tr><td class="mono">fetchpriority="high"</td><td>LCP：告诉浏览器优先加载首屏大图</td></tr>
+      <tr><td class="mono">合适的格式与内容</td><td>体积：渐变 1.7KB vs 噪声 360KB</td></tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>别给首屏大图加 lazy</b><br>
+      <code>loading="lazy"</code> 会把 LCP 图片的加载推迟到布局之后，
+      反而让 LCP 变差。首屏图要 <code>fetchpriority="high"</code>，
+      首屏外的图才 lazy。
+    </div>
+
+    <h3>关于格式</h3>
+    <p class="hint">
+      这个演练场用 PNG 演示"内容决定体积"：<b>同样 800×600、同样 PNG</b>，
+      噪声图 360 KB，渐变图 1.7 KB —— 差 200 倍。<br>
+      真实项目里还有更直接的收益：<b>WebP 通常比 PNG 小 25~35%，
+      AVIF 再小一截</b>，而且现代浏览器全支持。用 <code>&lt;picture&gt;</code>
+      可以做格式降级。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+onLoad(() => {
+  const imgs = [...document.querySelectorAll('img[src*="/api/image"]')];
+  let done = 0;
+  const report = () => {
+    if (++done < imgs.length) return;
+    setTimeout(() => {
+      imgs.forEach((img, i) => {
+        const e = performance.getEntriesByName(img.currentSrc || img.src).pop();
+        if (!e) return;
+        labLog(`图 ${i + 1}: ${(e.transferSize/1024).toFixed(1)} KB  ` +
+               `渲染 ${img.naturalWidth}×${img.naturalHeight}  ` +
+               `加载开始于 ${e.startTime.toFixed(0)}ms`);
+      });
+      labLog('');
+      labLog('--- 注意图 2 的 startTime：它在你滚动到附近时才发起 ---');
+    }, 100);
+  };
+  imgs.forEach(img => {
+    if (img.complete) report();
+    else img.addEventListener('load', report);
+  });
+});
+</script>
+</body>
+</html>

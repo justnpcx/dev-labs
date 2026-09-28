@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>响应压缩 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>未开启压缩</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/compress/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Network</b>，勾上 <b>Disable cache</b>（这个场景必须勾）</li>
+      <li>点「加载 300KB 脚本」</li>
+      <li>看这条记录的 <b>Size</b> 列 —— 注意它有<b>两个数字</b>，斜杠前面是走网络的，后面是解压后的</li>
+      <li>点开 → <b>Headers</b> → Response Headers 里<b>没有</b> <code>Content-Encoding</code></li>
+      <li>切到 <b>Response</b> 标签，看实际内容（几百 KB 的文本）</li>
+    </ol>
+    <div class="expect">
+      预期：Size ≈ <b>300 KB / 300 KB</b>（两个数字一样大）<br>
+      说明<b>一个字节都没被压缩</b>，原样传过来了。
+    </div>
+    <div class="warn">
+      <b>Size 列的两个数字要会读：</b><br>
+      <code>5.2 kB / 300 kB</code> —— 前面是<b>实际传输</b>（压缩后），
+      后面是<b>解压后</b>。<br>
+      问题版是 <code>300 kB / 300 kB</code>，优化版会变成 <code>24 kB / 300 kB</code>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="load()">加载 300KB 脚本</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>服务端做了什么（或者说没做什么）</h3>
+    <p class="hint">
+      问题版故意<b>不设置</b> <code>Content-Encoding</code>，
+      把 300KB 文本原样发出去：
+    </p>
+    <pre class="logbox">// 响应头里只有这些，没有 Content-Encoding
+Content-Type: text/javascript; charset=utf-8
+Content-Length: 307319
+
+// 优化版会多一行：
+Content-Encoding: gzip</pre>
+
+    <h3>为什么收益这么大</h3>
+    <p class="hint">
+      JS / CSS / HTML / JSON 都是<b>文本</b>，有大量重复的模式（变量名、
+      关键字、缩进、重复的字符串）。gzip 就是找重复并替换成短引用，
+      通常能压到 <b>1/5 ~ 1/10</b>。<br><br>
+      反过来，<b>已经压缩过的格式</b>（JPEG、PNG、WebP、MP4、ZIP）
+      再 gzip 几乎没有收益 —— 它们内部已经没多少冗余了。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function load() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '加载中…';
+
+  const url = '/assets/nogzip/big.js';
+  const t0 = performance.now();
+  const r = await fetch(url);
+  const text = await r.text();
+  const cost = performance.now() - t0;
+  const e = performance.getEntriesByName(location.origin + url).pop();
+
+  labLog(`HTTP ${r.status}`);
+  labLog(`走网络字节 transferSize  = ${e.transferSize.toLocaleString()}`);
+  labLog(`解压后字节 decodedBody   = ${e.decodedBodySize.toLocaleString()}`);
+  labLog(`压缩比 = ${(e.transferSize / e.decodedBodySize * 100).toFixed(1)}%（100% 表示完全没压缩）`);
+  labLog(`耗时 ${cost.toFixed(0)}ms，内容长度 ${text.length} 字符`);
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

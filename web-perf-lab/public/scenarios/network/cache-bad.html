@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>缓存策略 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>无缓存策略</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/cache/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Network</b>，<b>先不要</b>勾 Disable cache</li>
+      <li>点「请求 3 次」——同一个 URL 连发 3 次</li>
+      <li>看 3 条记录的 <b>Status</b>：都是 <code>200</code> 还是有的 <code>304</code>？</li>
+      <li>看 <b>Size</b> 列：每次都传了完整字节吗？</li>
+      <li>点开任意一条 → <b>Headers</b> → 看 Response Headers 里的 <code>Cache-Control</code></li>
+    </ol>
+    <div class="expect">
+      预期：<b>3 次全是 200，每次都传完整 body</b><br>
+      因为响应头写了 <code>Cache-Control: no-store</code> —— 浏览器不允许把它存进缓存。
+    </div>
+    <div class="warn">
+      <b>no-store 和 no-cache 不是一回事</b>（名字太像了）：<br>
+      · <code>no-store</code> —— <b>完全不存</b>，下次必然重新下载<br>
+      · <code>no-cache</code> —— <b>可以存，但每次都要向服务器确认</b>（拿到 304 就用本地的）<br>
+      问题版用的是 no-store，所以连确认的机会都没有。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="run()">请求 3 次</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>数字从哪来</h3>
+    <p class="hint">
+      下面的数字用的是 <b>Resource Timing API</b>，和 Network 面板同源：
+    </p>
+    <table>
+      <tr><th>字段</th><th>含义</th></tr>
+      <tr><td class="mono">transferSize</td><td>实际走网络的字节数。<b>缓存命中时为 0</b></td></tr>
+      <tr><td class="mono">encodedBodySize</td><td>压缩后的 body 大小</td></tr>
+      <tr><td class="mono">decodedBodySize</td><td>解压后的 body 大小</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      <b>transferSize = 0 就是缓存命中的铁证</b>，比看 Status 更可靠。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const URL_ = '/assets/nocache/app.js';
+
+async function run() {
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  log.textContent = '';
+  status.textContent = '请求中…';
+
+  for (let i = 1; i <= 3; i++) {
+    const r = await fetch(URL_, { cache: 'default' });
+    await r.text();
+    const e = performance.getEntriesByName(location.origin + URL_).pop();
+    labLog(
+      `第 ${i} 次: HTTP ${r.status}  ` +
+      `transferSize=${e.transferSize}  ` +
+      `encodedBody=${e.encodedBodySize}  ` +
+      `duration=${e.duration.toFixed(0)}ms`
+    );
+  }
+  status.textContent = '完成';
+  labLog('--- 3 次都走了网络。这就是没配缓存的代价 ---');
+}
+</script>
+</body>
+</html>

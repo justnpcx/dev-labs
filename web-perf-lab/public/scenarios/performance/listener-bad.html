@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>未节流的事件监听 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>未节流的事件监听</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/listener/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Performance</b> 面板，点录制</li>
+      <li>在下面的滚动区域里<b>快速上下滚动几秒</b></li>
+      <li>停止录制，看 Main 轨道 —— 应该<b>密密麻麻全是小任务</b></li>
+      <li>看底部 Summary：<b>Scripting</b> 占比很高</li>
+      <li>对比下面的「触发次数」——滚一次可能触发几十上百次</li>
+      <li>再打开优化版，同样滚几秒，对比触发次数和 Main 轨道的密度</li>
+    </ol>
+    <div class="expect">
+      预期：滚一次触发 <b>几十~上百次</b><br>
+      优化版用 rAF 节流后，降到<b>每帧最多一次</b>（约 60 次/秒）
+    </div>
+    <div class="warn">
+      <b>scroll / resize / mousemove / touchmove 是重灾区</b><br>
+      这些事件触发频率<b>远高于</b>屏幕刷新率。以 mousemove 为例，
+      高性能鼠标能到 1000Hz —— 每秒 1000 次回调，
+      而屏幕只有 60Hz，<b>你算 16 次，用户只看得到 1 次</b>。<br>
+      剩下 15 次纯属白烧 CPU，还抢占了本该用来渲染的时间。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="row">
+      <span class="hint">回调触发次数：</span>
+      <span class="mono" id="count" style="font-size:18px;color:var(--red)">0</span>
+      <button onclick="reset()">清零</button>
+    </div>
+
+    <div id="scrollArea" style="height:260px;overflow-y:scroll;border:1px solid var(--border);
+         border-radius:8px;background:#0b0f14">
+      <div style="height:2000px;padding:14px;color:var(--dim);font-size:13px">
+        ↕ 在这里快速上下滚动<br><br>
+        每次 scroll 事件都会跑一遍"重活"：<br>
+        · 读取 scrollTop（触发布局）<br>
+        · 遍历 200 个元素改样式<br>
+        · 更新 DOM 文本<br><br>
+        滚动几秒后看上面的计数器涨到了多少。
+      </div>
+    </div>
+
+    <pre id="log">在这个区域滚动试试</pre>
+
+    <h3>问题代码</h3>
+    <pre class="logbox">// ❌ 每个 scroll 事件都直接干活
+window.addEventListener('scroll', () =&gt; {
+  const top = area.scrollTop;              // 读 → 触发布局
+
+  for (let i = 0; i &lt; items.length; i++) {
+    items[i].style.transform = `translateY(${top * 0.1}px)`;  // 写 200 次
+  }
+  counter.textContent = ++count;           // 又写 DOM
+});
+// 滚动一秒 = 触发几十上百次 = 布局和样式计算被反复打断</pre>
+
+    <h3>为什么"每次事件都干活"是错的</h3>
+    <p class="hint">
+      浏览器渲染一帧的流程是：
+      <code>JS → Style → Layout → Paint → Composite</code>，
+      一秒最多跑 60 次（60fps）。<br><br>
+      而 scroll 事件可能一秒触发几百次。你在事件回调里做的事，
+      <b>99% 的结果用户根本看不到</b>（因为中间那些帧压根没被渲染），
+      但它们确实消耗了 CPU，还让浏览器<b>没法安心合成帧</b>。
+    </p>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>还有个更隐蔽的坑：被动事件</b><br>
+      在 <code>touchstart</code> / <code>touchmove</code> / <code>wheel</code>
+      上加监听时，浏览器默认要<b>等你的回调执行完</b>才能决定要不要滚动
+      —— 因为你的代码里可能调了 <code>preventDefault()</code>。<br>
+      如果你不打算阻止默认行为，加 <code>{ passive: true }</code>，
+      浏览器就能立刻开始滚动，不等你。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+let count = 0;
+const items = [];
+
+// 造 200 个元素，让"每次事件都遍历一遍"这件事有真实代价
+onLoad(() => {
+  const area = document.getElementById('scrollArea');
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden';
+  for (let i = 0; i < 200; i++) {
+    const d = document.createElement('div');
+    holder.appendChild(d);
+    items.push(d);
+  }
+  area.appendChild(holder);
+});
+
+function reset() {
+  count = 0;
+  document.getElementById('count').textContent = '0';
+  document.getElementById('log').textContent = '已清零，继续滚动';
+}
+
+// ❌ 每个 scroll 事件都直接干重活
+document.getElementById('scrollArea').addEventListener('scroll', () => {
+  const area = document.getElementById('scrollArea');
+  const top = area.scrollTop;                 // 读 → 触发布局
+
+  for (let i = 0; i < items.length; i++) {
+    items[i].style.transform = `translateY(${top * 0.1}px)`;
+  }
+
+  count++;
+  document.getElementById('count').textContent = count;
+}, { passive: true });
+
+// 停止滚动后统计一次
+let idleTimer = null;
+document.getElementById('scrollArea').addEventListener('scroll', () => {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (count > 0) {
+      labLog(`本次滚动共触发 ${count} 次回调`);
+      labLog('--- 对比优化版：用 rAF 节流后，每帧最多 1 次 ---');
+    }
+  }, 400);
+}, { passive: true });
+</script>
+</body>
+</html>
