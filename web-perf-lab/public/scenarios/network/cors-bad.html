@@ -21,6 +21,7 @@
   <aside class="card observe">
     <h2>DevTools 观察清单</h2>
     <ol>
+      <li>用 <code>http://localhost:8082</code> 打开本页（见下方说明，本场景必须本地访问）</li>
       <li>打开 <b>Network</b>，勾 Disable cache</li>
       <li>点「发 3 次请求」</li>
       <li>数一下 Network 里出现了几条记录 —— 应该是 <b>6 条</b>，不是 3 条</li>
@@ -44,19 +45,34 @@
       </ul>
       问题版故意加了自定义头，所以每次都预检。
     </div>
+
+    <div class="warn" style="background:#1a2430;border-color:var(--blue)">
+      <b>还有一个前提：必须跨源</b><br>
+      同源请求<b>根本不会有 CORS</b>，自然也没有预检。<br>
+      本页从 <code>localhost</code> 打 <code>127.0.0.1</code> —— 同一台服务器、
+      同一个端口，但 host 不同就是两个 origin，所以预检真的会发生。
+    </div>
   </aside>
 
   <main class="card demo">
     <h2>演示</h2>
     <div class="row">
-      <button onclick="run()">发 3 次请求</button>
+      <button onclick="run()" id="runBtn">发 3 次请求</button>
       <span class="hint" id="status">点一下开始</span>
+    </div>
+    <div class="warn" id="remoteNotice" hidden>
+      <b>本场景需要跨源，只能在本地跑</b><br>
+      公网入口挂了 Cloudflare Access，而浏览器发预检时不带 Access 的 cookie，
+      请求会被 403 挡掉 —— 你在 Network 里看不到 OPTIONS。<br><br>
+      先建隧道，再用本地地址访问：<br>
+      <code>ssh -L 8082:127.0.0.1:8082 root@&lt;IP&gt;</code><br>
+      然后打开 <code>http://localhost:8082/network/cors/bad</code>
     </div>
     <pre id="log">等待开始…</pre>
 
     <h3>这个请求为什么触发预检</h3>
     <pre class="logbox">// 问题版：带了自定义头 X-Lab-Token
-fetch('/api/cors/preflight', {
+fetch('http://127.0.0.1:8082/api/cors/preflight', {
   headers: { 'X-Lab-Token': 'abc123' }    // ← 就这一行导致预检
 });
 
@@ -64,7 +80,10 @@ fetch('/api/cors/preflight', {
 // 1) OPTIONS /api/cors/preflight          ← 预检
 //    Access-Control-Request-Headers: x-lab-token
 // 2) GET /api/cors/preflight              ← 真正请求
-//    X-Lab-Token: abc123</pre>
+//    X-Lab-Token: abc123
+
+// 注意 URL 是绝对路径：页面在 localhost，请求打 127.0.0.1。
+// host 不同 = 不同 origin，预检才会真的发生。</pre>
 
     <h3>预检本身不是问题，重复预检才是</h3>
     <p class="hint">
@@ -86,6 +105,12 @@ fetch('/api/cors/preflight', {
 
 <script src="/assets/lab.js"></script>
 <script>
+// 兄弟源：页面在 localhost 就打 127.0.0.1，反之亦然。
+// 同源 fetch 永远不会触发预检，所以这里必须用绝对 URL 跨源。
+const TWIN = labTwinOrigin();
+
+onLoad(labRequireLocalOrigin);
+
 async function run() {
   const log = document.getElementById('log');
   const status = document.getElementById('status');
@@ -96,7 +121,7 @@ async function run() {
 
   for (let i = 1; i <= 3; i++) {
     const t0 = performance.now();
-    const r = await fetch('/api/cors/preflight', {
+    const r = await fetch(`${TWIN}/api/cors/preflight`, {
       headers: { 'X-Lab-Token': 'abc123' },     // ← 触发预检
     });
     await r.json();

@@ -33,3 +33,18 @@ services:
         max-file: "3"
 
     restart: "no"
+
+    networks:
+      # default：compose 自建网络，宿主通过 127.0.0.1:8082 访问
+      - default
+      # ai-net：接入 AI 栈网络，让 cf-tunnel 能用容器名访问
+      # http://web-perf-lab:8080（公网入口走隧道，端口不暴露到宿主）
+      - ai-net
+
+networks:
+  default:
+    name: web-perf-lab_default
+  ai-net:
+    # 由 /data/ai-stack/docker-compose.yml 创建，本文件不负责它的生命周期
+    external: true
+    name: ai-stack_ai-net

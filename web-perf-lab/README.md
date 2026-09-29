@@ -31,7 +31,7 @@
 | 响应压缩 | Size 列两个数字怎么读；`Vary` 头漏了会出事故 |
 | 渲染阻塞 JS | 同步 script 导致白屏；`defer` 只解决白屏不解决卡 |
 | 图片与 CLS | 宽高缺失导致布局偏移；懒加载与 LCP 优先级 |
-| CORS 预检 | 什么时候触发 OPTIONS；`Max-Age` 的作用 |
+| CORS 预检 | 什么时候触发 OPTIONS；`Max-Age` 的作用。**⚠ 仅本地可跑，见「已知限制」** |
 | 慢 TTFB 与重定向链 | Timing 面板拆解；重定向为什么贵 |
 
 ### Performance 面板（5 个）
@@ -200,8 +200,19 @@ if (serveScenario(res, p)) return;
 
 ## 已知限制
 
-- **CORS 场景**：同源页面上的跨域请求需要另一个源。
-  当前用自定义头触发预检来演示，效果等价但不是真正的跨域。
+- **CORS 场景只能在本地跑**。预检只在**跨源**时发生，所以页面必须从
+  `localhost` 打 `127.0.0.1`（同机同端口，但 host 不同 = 不同 origin）。
+  两个场景页都用 `labTwinOrigin()` 算这个兄弟源。
+
+  **不要用公网域名打开** —— 公网入口挂了 Cloudflare Access，
+  而浏览器发预检时不带 Access 的 cookie，会被 **403** 挡掉，
+  Network 里一条 OPTIONS 都看不到。页面检测到非本地访问时会禁用按钮并给出隧道命令。
+  正确姿势：
+
+  ```bash
+  ssh -L 8082:127.0.0.1:8082 root@<IP>
+  # 浏览器打开 http://localhost:8082/network/cors/bad
+  ```
 - **内存泄漏场景**：`performance.memory` 是 Chrome 专有 API，
   Firefox / Safari 上显示不出来。堆快照对比只在 Chrome 有效。
 - **Worker 场景**：部分严格的 CSP 环境会拦 Worker，这里没设 CSP，可以正常跑。

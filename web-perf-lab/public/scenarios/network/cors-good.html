@@ -21,6 +21,7 @@
   <aside class="card observe">
     <h2>DevTools 观察清单</h2>
     <ol>
+      <li>用 <code>http://localhost:8082</code> 打开本页（本场景必须本地访问，见问题版说明）</li>
       <li><b>Network</b> 面板，勾 Disable cache</li>
       <li>点「发 3 次请求」</li>
       <li>数记录数 —— 这次应该只有 <b>3 条</b>，没有 OPTIONS</li>
@@ -50,19 +51,27 @@
   <main class="card demo">
     <h2>演示</h2>
     <div class="row">
-      <button onclick="run()">发 3 次请求</button>
+      <button onclick="run()" id="runBtn">发 3 次请求</button>
       <span class="hint" id="status">点一下开始</span>
+    </div>
+    <div class="warn" id="remoteNotice" hidden>
+      <b>本场景需要跨源，只能在本地跑</b><br>
+      公网入口挂了 Cloudflare Access，而浏览器发预检时不带 Access 的 cookie，
+      请求会被 403 挡掉 —— 你在 Network 里看不到 OPTIONS。<br><br>
+      先建隧道，再用本地地址访问：<br>
+      <code>ssh -L 8082:127.0.0.1:8082 root@&lt;IP&gt;</code><br>
+      然后打开 <code>http://localhost:8082/network/cors/good</code>
     </div>
     <pre id="log">等待开始…</pre>
 
     <h3>改动就一行</h3>
     <pre class="logbox">// 问题版：带自定义头 → 触发预检
-fetch('/api/cors/preflight', {
+fetch('http://127.0.0.1:8082/api/cors/preflight', {
   headers: { 'X-Lab-Token': 'abc123' }
 });
 
 // 优化版：不带自定义头 → 简单请求，直接发
-fetch('/api/cors/simple');</pre>
+fetch('http://127.0.0.1:8082/api/cors/simple');</pre>
 
     <h3>但现实里经常躲不掉</h3>
     <p class="hint">
@@ -96,6 +105,11 @@ fetch('/api/cors/simple');</pre>
 
 <script src="/assets/lab.js"></script>
 <script>
+// 和问题版用同一个兄弟源，这样两个页面的"源"一致，对比才公平
+const TWIN = labTwinOrigin();
+
+onLoad(labRequireLocalOrigin);
+
 async function run() {
   const log = document.getElementById('log');
   const status = document.getElementById('status');
@@ -106,7 +120,7 @@ async function run() {
 
   for (let i = 1; i <= 3; i++) {
     const t0 = performance.now();
-    const r = await fetch('/api/cors/simple');     // ← 不带自定义头
+    const r = await fetch(`${TWIN}/api/cors/simple`);     // ← 不带自定义头
     await r.json();
     labLog(`第 ${i} 次请求完成，HTTP ${r.status}，耗时 ${(performance.now() - t0).toFixed(0)}ms`);
   }

@@ -155,6 +155,9 @@ button {
 }
 button:hover { background: #26313f; border-color: #3a4757; }
 button:active { transform: translateY(1px); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:disabled:hover { background: var(--panel2); border-color: var(--border); }
+button:disabled:active { transform: none; }
 
 #log, .logbox {
   background: #0b0f14;

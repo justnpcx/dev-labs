@@ -19,6 +19,36 @@ function onLoad(fn) {
   }
 }
 
+/** 本演练场的「兄弟源」：同一台服务器、同一个端口，只是 host 不同。
+    浏览器眼里 localhost 和 127.0.0.1 是两个不同的 origin，
+    所以从 localhost 打 127.0.0.1 是真的跨源 —— 这是 CORS 场景能触发预检的唯一前提。
+    （相对路径 fetch 是同源，永远不会预检。） */
+function labTwinOrigin() {
+  const twin = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  return `${location.protocol}//${twin}${location.port ? ':' + location.port : ''}`;
+}
+
+/** 是否通过本地回环访问。CORS 场景要求跨源，只有本地才满足：
+    公网入口挂了 Cloudflare Access，而预检请求不带 Access 的 cookie，会被 403 挡掉。 */
+function labIsLocalOrigin() {
+  return location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+}
+
+/** CORS 场景专用的降级：非本地访问时禁用按钮并说明原因，而不是"点了没反应" */
+function labRequireLocalOrigin() {
+  if (labIsLocalOrigin()) return true;
+  const notice = document.getElementById('remoteNotice');
+  if (notice) notice.hidden = false;
+  const btn = document.getElementById('runBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '仅本地可用';
+  }
+  const status = document.getElementById('status');
+  if (status) status.textContent = '请用 SSH 隧道本地访问';
+  return false;
+}
+
 /** 显示当前页面的关键指标（有些场景用它证明"页面自己也知道自己慢"） */
 function showMetrics() {
   const el = document.getElementById('metrics');

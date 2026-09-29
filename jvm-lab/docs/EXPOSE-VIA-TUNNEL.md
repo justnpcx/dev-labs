@@ -1,33 +1,54 @@
 # 通过 Cloudflare Tunnel 暴露仪表盘
 
-## ✅ 已完成（2026-09-27）
+> 本文以 jvm-lab 为例，但**规则对 web-perf-lab 同样适用** —— 两个演练场现在都挂了公网入口。
+
+## ✅ 已完成（2026-09-30 复验）
 
 | 项 | 值 |
 |---|---|
-| 公网域名 | **https://jvmlab.justnpc.com** |
-| 隧道 ingress | `jvmlab.justnpc.com` → `http://jvm-lab:8080`（config version=19） |
+| 公网域名 | **https://jvm.justnpc.com**（原 `jvmlab.justnpc.com`，已改名） |
+| 隧道 ingress | `jvm.justnpc.com` → `http://jvm-lab:8080` |
 | 鉴权 | **Cloudflare Access**（team `justnpc`，策略：Allow + Include Emails） |
 | 源站 | 容器内 `172.20.0.20`，宿主端口仍只绑 `127.0.0.1:8081` |
+
+同隧道上的第二个演练场：
+
+| 项 | 值 |
+|---|---|
+| 公网域名 | **https://web.justnpc.com** |
+| 隧道 ingress | `web.justnpc.com` → `http://web-perf-lab:8080` |
+| 鉴权 | Cloudflare Access（同上） |
+| 源站 | 容器内 `172.20.0.21`，宿主端口仍只绑 `127.0.0.1:8082` |
 
 验证结果（全部通过）：
 
 ```
-GET /                   302 → justnpc.cloudflareaccess.com/cdn-cgi/access/login/jvmlab.justnpc.com
+GET /                   302 → justnpc.cloudflareaccess.com/cdn-cgi/access/login/jvm.justnpc.com
 GET /status             302 → Access
 GET /actuator/heapdump  302 → Access   （配置前：匿名可下 32.4MB）
 GET /oom/heap           302 → Access   （配置前：匿名可触发 OOM）
 ```
 
-Access 下发的 meta JWT 解码确认策略绑定正确：
+9 类绕过尝试（不存在路径 / 静态资源 / 查询串 / 路径穿越 / `//` / HEAD / POST / 明文 HTTP）
+全部被拦。解码 meta JWT 确认绑定正确：
 
 ```
-hostname     = jvmlab.justnpc.com     ← 绑的就是这个域名
-auth_status  = NONE                    ← 未登录
-redirect_url = /                       ← 登录后回首页
+hostname     = jvm.justnpc.com     ← 绑的就是这个域名
+auth_status  = NONE                ← 未登录
+redirect_url = /                   ← 登录后回首页
 ```
 
-绕过测试（明文 HTTP / 不存在路径 / 静态资源 / 查询串 / 路径穿越 / HEAD / POST）
-全部被拦；明文 HTTP 的 301 只是 HTTPS 强制跳转，第二跳照样进 Access。
+### ⚠ 改域名必须同步改 Access 应用
+
+`jvmlab` → `jvm` 这次改名踩过：Access 应用绑的还是旧 hostname，
+改完 DNS 就**静默失配** —— 页面能打开、没有任何报错，
+但 `/actuator/heapdump` 匿名可下载 32MB。**改完务必用下面的命令复验**，
+别只看"有没有登录页"：
+
+```bash
+curl -sI https://jvm.justnpc.com/ | grep -iE '^HTTP/|^location:'
+# 期望 302 指向 cloudflareaccess.com；直接 200 就是没生效
+```
 
 **注意事项**：登录后的会话有效期按 Access 应用的 Session Duration 走，
 过期需要重新验证邮箱。别把域名分享出去。
@@ -43,12 +64,41 @@ redirect_url = /                       ← 登录后回首页
 | 项 | 状态 |
 |---|---|
 | jvm-lab 接入 `ai-stack_ai-net` | ✅ 与 cf-tunnel 同网络（`172.20.0.20`） |
+| web-perf-lab 接入 `ai-stack_ai-net` | ✅ `172.20.0.21`（**一开始漏了这步，导致 502**） |
 | 从该网络按容器名访问 | ✅ `http://jvm-lab:8080/status` 和首页均返回 200 |
 | `/actuator/env` 关闭 | ✅ 返回 404（避免配置泄露） |
-| 宿主端口 | 仍只绑 `127.0.0.1:8081`，**没有**暴露到 `0.0.0.0` |
+| 宿主端口 | 仍只绑 `127.0.0.1:8081` / `8082`，**没有**暴露到 `0.0.0.0` |
 
 隧道是 **token 驱动的远程管理型**（`tunnel run` + `TUNNEL_TOKEN`，无本地 `config.yml`），
 所以 ingress 规则**只能**在 Cloudflare 后台加 —— 服务器侧无法新增路由。
+（Access 应用同理，服务器侧也没有 API 凭据。）
+
+### ⚠ 前置条件：容器必须接入 `ai-stack_ai-net`
+
+隧道容器 `cf-tunnel` 只挂在 `ai-stack_ai-net` 上，它**看不见别的网络里的容器**。
+新演练场如果不接这个网络，ingress 填得再对也是 502：
+
+```
+cf-tunnel     → ai-stack_ai-net      172.20.0.18
+jvm-lab       → ai-stack_ai-net      172.20.0.20   ✅
+web-perf-lab  → web-perf-lab_default 172.21.0.2    ❌ 隧道够不着 → 502
+```
+
+`web-perf-lab/docker-compose.yml` 补上即可：
+
+```yaml
+    networks:
+      - default
+      - ai-net
+networks:
+  default:
+    name: web-perf-lab_default
+  ai-net:
+    external: true
+    name: ai-stack_ai-net
+```
+
+**排查口诀**：公网 502 时先看容器挂在哪张网 —— 而不是先怀疑 ingress 填错。
 
 ---
 
@@ -61,7 +111,7 @@ redirect_url = /                       ← 登录后回首页
 
 | 字段 | 填什么 | 说明 |
 |---|---|---|
-| Subdomain | `jvmlab` | 随便取，别和你已有的子域冲突 |
+| Subdomain | `jvm` | 随便取，别和你已有的子域冲突 |
 | Domain | 你托管在 Cloudflare 的域名 | 下拉选 |
 | Path | **留空** | |
 | Type | **HTTP** | 容器内是明文 HTTP，TLS 由 Cloudflare 边缘终结 |
@@ -102,7 +152,7 @@ redirect_url = /                       ← 登录后回首页
 3. 填：
    - **Application name**：`JVM 演练场`
    - **Session Duration**：`24 hours`（按需）
-   - **Public hostname**：选你上一步加的 `jvmlab.<你的域名>`
+   - **Public hostname**：选你上一步加的 `jvm.justnpc.com`
 4. **Next** → 添加策略（Add policy）：
 
 | 字段 | 填什么 |
@@ -120,16 +170,26 @@ redirect_url = /                       ← 登录后回首页
 
 ## 步骤 C：验证
 
-1. 浏览器打开 `https://jvmlab.<你的域名>`
+1. 浏览器打开 `https://jvm.justnpc.com`
 2. **应该先跳到 Cloudflare 的登录页**（让你输邮箱收验证码）—— 看到这一步说明 Access 生效了
 3. 登录后才看到仪表盘
 
 验证 Access 确实在拦（未登录时应被重定向，而不是直接 200）：
 
 ```bash
-curl -sI https://jvmlab.<你的域名>/ | head -5
+curl -sI https://jvm.justnpc.com/ | head -5
 # 期望看到 302，Location 指向 cloudflareaccess.com
 # 如果直接 200，说明 Access 没生效，回去检查策略
+```
+
+**建议连同敏感端点一起验**（只看状态码，别真下载）：
+
+```bash
+for p in / /status /actuator/heapdump /oom/heap; do
+  printf '%-22s ' "$p"
+  curl -s -o /dev/null -w '%{http_code}\n' "https://jvm.justnpc.com$p"
+done
+# 四行都应该是 302
 ```
 
 ---
@@ -183,17 +243,39 @@ Tomcat **静默丢弃**含中文等非 ASCII 字符的响应头 —— 不报错
 
 **规则：响应头的值只能是 ASCII。** 中文放 body 里。
 
+### ④ Access 会把跨域预检（CORS preflight）403 掉
+
+**实测确认。** 浏览器发预检时**不带 `CF_Authorization` cookie**，
+Access 又无法重定向一个 `OPTIONS` 请求，于是直接拒绝：
+
+| 域名 | 有 Access | `OPTIONS` + `Origin` + `Access-Control-Request-Method` |
+|---|---|---|
+| `web.justnpc.com` | 是 | **403** |
+| `chat.justnpc.com` | 否 | 200（到达源站） |
+| `n8n.justnpc.com` | 否 | 404（到达源站） |
+
+**影响**：经 Access 暴露的服务**做不了跨域 CORS 演练**。
+`web-perf-lab` 的 CORS 场景因此只能在本地跑（页面从 `localhost` 打 `127.0.0.1`，
+同机同端口但 host 不同 = 不同 origin，能真的触发预检），
+公网访问时页面会禁用按钮并提示用 SSH 隧道。
+详见 `web-perf-lab/README.md` 的「已知限制」。
+
+> 想绕过也不是不行 —— 给 API 单独开一个不带 Access 的子域，
+> 或给该路径配 Bypass 策略。但为了演示一个 DevTools 面板多开一个公网入口，
+> 暴露面换收益不划算，本项目选择不做。
+
 ---
 
 ## 排错
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| **502 Bad Gateway** | ① 源站返回了空 body 的 4xx ② 文件太大 ③ jvm-lab 容器没跑 | 先看 `./lab.sh log`；再看接口本地返回什么 |
+| **502 Bad Gateway** | ① 源站返回了空 body 的 4xx ② 文件太大 ③ 容器没跑 ④ **容器没接 `ai-stack_ai-net`** | 先看 `./lab.sh log`；再看接口本地返回什么；再 `docker inspect <容器>` 看挂在哪张网 |
 | 502 且 URL 填错 | 填了 `localhost:8081` | 改回 `jvm-lab:8080` |
 | 域名解析不了 | DNS 记录没自动创建 | 检查 Cloudflare DNS 里是否有该子域的 CNAME 指向 `<隧道ID>.cfargotunnel.com` |
 | 能打开但**曲线不动** | 浏览器侧拿不到 `/status` | F12 看 Network；确认 `/status` 返回 200 |
-| 直接 200 没跳登录 | Access 策略没绑到这个 hostname | 检查 Access 应用的 Public hostname 是否一致 |
+| 直接 200 没跳登录 | Access 策略没绑到这个 hostname（**改域名后最容易踩**） | 检查 Access 应用的 Public hostname 是否与 ingress 完全一致 |
+| 跨域预检 403 | Access 拦截 OPTIONS | 见「已知限制 ④」，改走本地 SSH 隧道 |
 | 页面样式全丢 | 静态资源没加载 | 硬刷新（Ctrl+Shift+R） |
 
 **排查 502 的通用方法**：先绕过 Cloudflare 直接打源站。
