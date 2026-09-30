@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>长列表渲染 · 优化版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   #vp {
     height: 420px; overflow-y: auto; margin: 12px 0;
@@ -47,7 +61,7 @@
       预期：渲染耗时 <b>个位数毫秒</b>，DOM 节点数 <b>约 30 个</b><br>
       一万条和一百万条，DOM 开销<b>完全一样</b>。
     </div>
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>核心思路只有一句话</b><br>
       <b>DOM 里永远只放"当前看得见的那些行"</b>，
       用一个撑高的占位元素骗过滚动条，滚动时换内容。<br><br>
@@ -179,7 +193,7 @@ function renderMetrics(rows) {
   const el = document.getElementById('metrics');
   if (!el) return;
   el.innerHTML = rows.map(([k, v]) =>
-    `<div class="row" style="justify-content:space-between;margin:0;padding:4px 0;border-bottom:1px dashed #222a35">
+    `<div class="row" style="justify-content:space-between;margin:0;padding:4px 0;border-bottom:1px dashed var(--border-soft)">
        <span class="hint">${k}</span><span class="mono">${v}</span>
      </div>`).join('');
 }

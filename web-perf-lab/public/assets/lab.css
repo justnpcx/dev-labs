@@ -1,19 +1,83 @@
 /* 前端性能演练场 —— 所有场景页共用样式
    刻意保持简单：这是个拿来练 DevTools 的地方，
-   页面本身不该成为干扰（除了那些**故意**做慢的场景）。 */
+   页面本身不该成为干扰（除了那些**故意**做慢的场景）。
 
-:root {
-  --bg: #0f1419;
-  --panel: #161b22;
-  --panel2: #1c2430;
-  --border: #2a3441;
-  --text: #d7dde5;
-  --dim: #7d8899;
-  --green: #3fb950;
-  --yellow: #d29922;
-  --red: #f85149;
-  --blue: #58a6ff;
-  --purple: #bc8cff;
+   ── 主题 ──
+   两套主题共用同一组变量名，组件只引用变量、不写死颜色。
+   实际主题由 <head> 里的引导脚本解析成 light/dark 写到 <html data-theme>，
+   所以这里不需要媒体查询 —— 只有"深色兜底 + 浅色覆盖"两条规则。 */
+
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:          #12161c;
+  --panel:       #1a1f27;
+  --panel2:      #222831;
+  --border:      #2e3742;
+  --border-soft: #262d36;
+
+  --text:        #c6ced8;
+  --text-strong: #e3e9f0;
+  --dim:         #8a93a0;
+
+  --accent:      #58a6ff;
+  --blue:        #58a6ff;   /* --blue 是历史命名，保留给已有页面用 */
+  --green:       #3fb950;
+  --yellow:      #d29922;
+  --red:         #f85149;
+  --purple:      #bc8cff;
+
+  --accent-bg:   #12202e;
+  --green-bg:    #12261a;
+  --red-bg:      #2d1a1b;
+  --yellow-bg:   #2b2312;
+
+  --code-bg:     #0b0f14;
+  --code-text:   #a9b6c4;
+  --hover-bg:    #26313f;
+  --expect-bg:   #12202e;
+  --expect-text: #a9b6c4;
+  --warn-bg:     #2d1a1b;
+  --warn-text:   #ffb4ae;
+  --ok-text:     #7ee787;
+  --shadow:      none;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:          #f6f8fa;
+  --panel:       #ffffff;
+  --panel2:      #eef1f4;
+  --border:      #d0d7de;
+  --border-soft: #e6eaee;
+
+  --text:        #2f363d;
+  --text-strong: #1f2328;
+  --dim:         #6a737d;
+
+  /* 浅色底上必须换更深的强调色，否则对比度到不了 WCAG AA 的 4.5:1 */
+  --accent:      #0969da;
+  --blue:        #0969da;
+  --green:       #1a7f37;
+  --yellow:      #9a6700;
+  --red:         #cf222e;
+  --purple:      #8250df;
+
+  --accent-bg:   #ddf4ff;
+  --green-bg:    #dafbe1;
+  --red-bg:      #ffebe9;
+  --yellow-bg:   #fff8c5;
+
+  --code-bg:     #f6f8fa;
+  --code-text:   #2f363d;
+  --hover-bg:    #e6eaee;
+  --expect-bg:   #ddf4ff;
+  --expect-text: #2f363d;
+  --warn-bg:     #ffebe9;
+  --warn-text:   #a40e26;
+  --ok-text:     #1a7f37;
+  --shadow:      0 1px 2px rgba(31, 35, 40, .07);
 }
 
 * { box-sizing: border-box; }
@@ -23,9 +87,10 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  transition: background-color .18s ease, color .18s ease;
 }
 
-a { color: var(--blue); }
+a { color: var(--accent); }
 
 code, pre, .mono {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
@@ -36,7 +101,7 @@ code {
   background: var(--panel2);
   padding: 1px 5px;
   border-radius: 4px;
-  color: #a9b6c4;
+  color: var(--code-text);
 }
 
 /* ── 顶栏 ── */
@@ -52,7 +117,7 @@ code {
   top: 0;
   z-index: 10;
 }
-.lab-header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.lab-header h1 { font-size: 16px; margin: 0; font-weight: 600; color: var(--text-strong); }
 .lab-header .back { color: var(--dim); text-decoration: none; font-size: 13px; }
 .lab-header .back:hover { color: var(--text); }
 .lab-header .spacer { flex: 1; }
@@ -65,15 +130,15 @@ code {
   font-weight: 600;
   white-space: nowrap;
 }
-.badge.bad  { color: #ffb4ae; border-color: #5c2223; background: #2d1a1b; }
-.badge.good { color: #7ee787; border-color: #1f4d29; background: #12261a; }
-.badge.info { color: var(--blue); border-color: #1f3d5c; background: #12202e; }
+.badge.bad   { color: var(--red);   border-color: var(--red);   background: var(--red-bg); }
+.badge.good  { color: var(--green); border-color: var(--green); background: var(--green-bg); }
+.badge.info  { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
 
-/* 难度分级徽章。颜色随难度升温：青 → 蓝 → 橙 → 红 */
-.badge.lv1 { color: #7ee787; border-color: #1f4d29; background: #12261a; }
-.badge.lv2 { color: #79c0ff; border-color: #1f3d5c; background: #12202e; }
-.badge.lv3 { color: #ffc86b; border-color: #5c4a1f; background: #2b2312; }
-.badge.lv4 { color: #ff9b8f; border-color: #5c2f22; background: #2d1a16; }
+/* 难度分级徽章。颜色随难度升温：绿 → 蓝 → 橙 → 红 */
+.badge.lv1 { color: var(--green);  border-color: var(--green);  background: var(--green-bg); }
+.badge.lv2 { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+.badge.lv3 { color: var(--yellow); border-color: var(--yellow); background: var(--yellow-bg); }
+.badge.lv4 { color: var(--red);    border-color: var(--red);    background: var(--red-bg); }
 
 .counterpart {
   font-size: 13px;
@@ -82,8 +147,23 @@ code {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel2);
+  color: var(--text);
 }
-.counterpart:hover { background: #26313f; }
+.counterpart:hover { background: var(--hover-bg); }
+
+/* ── 主题切换（由 lab.js 注入到页头） ── */
+.theme-switch {
+  display: inline-flex; border: 1px solid var(--border);
+  border-radius: 7px; overflow: hidden; background: var(--panel2);
+}
+.theme-switch button {
+  border: 0; border-radius: 0; background: transparent;
+  padding: 4px 9px; font-size: 11.5px; color: var(--dim);
+}
+.theme-switch button + button { border-left: 1px solid var(--border); }
+.theme-switch button[aria-pressed="true"] {
+  background: var(--accent-bg); color: var(--accent); font-weight: 600;
+}
 
 /* ── 布局 ── */
 .wrap {
@@ -100,8 +180,9 @@ code {
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 16px;
+  box-shadow: var(--shadow);
 }
 .card h2 {
   font-size: 12px;
@@ -111,7 +192,7 @@ code {
   text-transform: uppercase;
   letter-spacing: .06em;
 }
-.card h3 { font-size: 14px; margin: 16px 0 8px; }
+.card h3 { font-size: 14px; margin: 16px 0 8px; color: var(--text-strong); }
 .card h3:first-child { margin-top: 0; }
 
 /* ── 观察清单 ── */
@@ -122,21 +203,21 @@ code {
 .expect {
   margin-top: 14px;
   padding: 10px 12px;
-  background: #12202e;
-  border-left: 3px solid var(--blue);
+  background: var(--expect-bg);
+  border-left: 3px solid var(--accent);
   border-radius: 4px;
   font-size: 13px;
-  color: #a9b6c4;
+  color: var(--expect-text);
 }
-.expect b { color: var(--blue); }
+.expect b { color: var(--accent); }
 .warn {
   margin-top: 12px;
   padding: 10px 12px;
-  background: #2d1a1b;
+  background: var(--warn-bg);
   border-left: 3px solid var(--red);
   border-radius: 4px;
   font-size: 13px;
-  color: #ffb4ae;
+  color: var(--warn-text);
 }
 
 /* ── 演示区 ── */
@@ -158,15 +239,16 @@ button {
   font-size: 13px;
   cursor: pointer;
   font-family: inherit;
+  transition: background .15s, border-color .15s;
 }
-button:hover { background: #26313f; border-color: #3a4757; }
+button:hover { background: var(--hover-bg); border-color: var(--accent); }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button:disabled:hover { background: var(--panel2); border-color: var(--border); }
 button:disabled:active { transform: none; }
 
 #log, .logbox {
-  background: #0b0f14;
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
@@ -174,7 +256,7 @@ button:disabled:active { transform: none; }
   overflow: auto;
   font-family: ui-monospace, Consolas, monospace;
   font-size: 12px;
-  color: #a9b6c4;
+  color: var(--code-text);
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
@@ -183,7 +265,7 @@ button:disabled:active { transform: none; }
 /* 演示用的方块，方便看 layout / paint */
 .box {
   width: 60px; height: 60px;
-  background: var(--blue);
+  background: var(--accent);
   border-radius: 6px;
   display: inline-block;
 }
@@ -204,7 +286,7 @@ button:disabled:active { transform: none; }
 
 /* 占位骨架，用来演示 CLS */
 .skeleton {
-  background: linear-gradient(90deg, #1c2430 25%, #26313f 50%, #1c2430 75%);
+  background: linear-gradient(90deg, var(--panel2) 25%, var(--hover-bg) 50%, var(--panel2) 75%);
   background-size: 200% 100%;
   animation: sk 1.2s infinite;
   border-radius: 6px;
@@ -218,3 +300,8 @@ td.mono { font-family: ui-monospace, Consolas, monospace; }
 
 .hint { font-size: 12.5px; color: var(--dim); }
 .hint b { color: var(--text); }
+
+/* 尊重「减少动态效果」 */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

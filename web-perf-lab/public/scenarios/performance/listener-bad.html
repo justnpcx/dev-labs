@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>未节流的事件监听 · 问题版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 </head>
 <body>
 
@@ -51,7 +65,7 @@
     </div>
 
     <div id="scrollArea" style="height:260px;overflow-y:scroll;border:1px solid var(--border);
-         border-radius:8px;background:#0b0f14">
+         border-radius:8px;background:var(--code-bg)">
       <div style="height:2000px;padding:14px;color:var(--dim);font-size:13px">
         ↕ 在这里快速上下滚动<br><br>
         每次 scroll 事件都会跑一遍"重活"：<br>
@@ -86,7 +100,7 @@ window.addEventListener('scroll', () =&gt; {
       但它们确实消耗了 CPU，还让浏览器<b>没法安心合成帧</b>。
     </p>
 
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>还有个更隐蔽的坑：被动事件</b><br>
       在 <code>touchstart</code> / <code>touchmove</code> / <code>wheel</code>
       上加监听时，浏览器默认要<b>等你的回调执行完</b>才能决定要不要滚动

@@ -5,13 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>渲染阻塞 JS · 优化版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <!-- 同一个文件，只加了一个 defer。
      浏览器会「边下载边继续解析 HTML」，等 HTML 解析完再按顺序执行。 -->
 <script src="/assets/block.js" defer></script>
 </head>
 <body>
 
-<div style="background:#1f4d29;color:#7ee787;padding:14px 20px;font-size:14px">
+<div style="background:var(--green-bg);color:var(--green);padding:14px 20px;font-size:14px">
   ✓ 这句话应该<b>立刻</b>出现，没有白屏。<br>
   脚本还在下载执行，但它<b>不挡着页面渲染了</b>。
 </div>
@@ -39,7 +53,7 @@
       预期：<code>DOMContentLoaded</code> ≈ <b>50ms</b>（问题版是 1500ms+）<br>
       首屏立刻可见 —— <b>但主线程仍然被占 1.5 秒</b>。
     </div>
-    <div class="warn" style="background:#2d1a1b;border-color:var(--red);color:#ffb4ae">
+    <div class="warn" style="background:var(--warn-bg);border-color:var(--red);color:var(--warn-text)">
       <b>defer 只解决了"白屏"，没解决"卡"。</b><br>
       脚本执行时主线程照样被占满 1.5 秒，这期间<b>点击、输入、滚动都没响应</b>。
       真正要治的是那个忙等本身 —— 见 Performance 面板的「长任务」场景。
@@ -60,7 +74,7 @@
       <tr>
         <td class="mono">&lt;script&gt;</td>
         <td>立即</td><td>下载完立刻执行</td>
-        <td><b style="color:#ffb4ae">是</b></td>
+        <td><b style="color:var(--red)">是</b></td>
       </tr>
       <tr>
         <td class="mono">&lt;script defer&gt;</td>

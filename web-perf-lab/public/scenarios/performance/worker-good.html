@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>主线程卸载 · 优化版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   .pulse { display:flex; align-items:center; gap:12px; margin:10px 0; }
   .dot { width:14px; height:14px; border-radius:50%; background:#7ee787; }
@@ -37,7 +51,7 @@
       预期：计数不停，主线程几乎无长任务<br>
       总计算时间<b>和问题版差不多</b>，但用户完全感觉不到。
     </div>
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>Performance 面板里的 Worker 轨道</b><br>
       录制的顶部会出现一条单独标注 <code>Worker</code> 的轨道 ——
       重活跑到那儿去了。<br><br>
@@ -65,7 +79,7 @@
     <pre class="logbox">// 主线程只负责"发指令"和"收结果"
 const worker = new Worker(workerUrl);
 worker.onmessage = (e) =&gt; render(e.data);
-button.onclick = () =&gt; worker.postMessage({ n: 38, times: 40 });
+button.onclick = () =&gt; worker.postMessage({ n: 36, times: 8 });
 
 // Worker 里跑同样的代码，但它在**另一条线程**上
 self.onmessage = (e) =&gt; {
@@ -155,7 +169,7 @@ worker.onmessage = (e) => {
 
 function runHeavy() {
   document.getElementById('status').textContent = 'Worker 计算中，主线程空闲…';
-  worker.postMessage({ n: 38, times: 40 });
+  worker.postMessage({ n: 36, times: 8 });
 }
 </script>
 </body>

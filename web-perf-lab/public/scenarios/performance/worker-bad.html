@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>主线程卸载 · 问题版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   .pulse { display:flex; align-items:center; gap:12px; margin:10px 0; }
   .dot { width:14px; height:14px; border-radius:50%; background:var(--red); }
@@ -56,7 +70,7 @@
 
     <div class="row">
       <button id="toggle" onclick="toggleCount()">开始计数</button>
-      <button onclick="runHeavy()">算 40 次斐波那契(38)</button>
+      <button onclick="runHeavy()">算 8 次斐波那契(36)</button>
       <span class="hint" id="status">先开计数，再点右边的</span>
     </div>
     <pre id="log">等待开始…</pre>
@@ -64,7 +78,7 @@
     <h3>问题出在这一行</h3>
     <pre class="logbox">// 点击处理里直接跑重活 —— 主线程被独占，谁都别想跑
 button.onclick = () => {
-  const r = fib(38);          // ← 同步递归，纯 CPU
+  const r = fib(36);          // ← 同步递归，纯 CPU
   render(r);
 };
 
@@ -125,7 +139,7 @@ function runHeavy() {
 
   const t0 = performance.now();
   let acc = 0;
-  for (let i = 0; i < 40; i++) acc += fib(38);
+  for (let i = 0; i < 8; i++) acc += fib(36);
   const cost = performance.now() - t0;
 
   labLog(`同步算完，耗时 ${cost.toFixed(0)}ms（结果 ${acc}）`);

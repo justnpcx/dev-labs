@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>渲染阻塞 JS · 问题版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <!-- ⚠ 关键：同步 script 放在 head 里，没有任何 defer / async。
      浏览器解析到这里必须停下来：下载 → 执行 → 才能继续解析后面的 HTML。
      这个文件故意忙等 1.5 秒，所以首屏会白屏 1.5 秒以上。 -->
@@ -14,7 +28,7 @@
 
 <!-- 下面这块是首屏内容。它要等上面那个 script 执行完才会被解析到。
      刷新页面时注意：白屏多久，这块内容就晚多久出现。 -->
-<div style="background:#5c2223;color:#ffb4ae;padding:14px 20px;font-size:14px">
+<div style="background:var(--red-bg);color:var(--red);padding:14px 20px;font-size:14px">
   ⚠ 你看到这句话的时刻，就是<b>首屏开始渲染</b>的时刻。<br>
   如果你刷新后等了 1.5 秒以上才看到它 —— 那就是渲染阻塞。
 </div>

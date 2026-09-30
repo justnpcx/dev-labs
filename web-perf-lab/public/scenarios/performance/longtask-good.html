@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>长任务阻塞主线程 · 优化版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 </head>
 <body>
 
@@ -31,7 +45,7 @@
       预期：计数器<b>始终在跳</b>，页面全程可点可滚<br>
       Main 轨道变成一串短任务，Long Task 数量降为 0
     </div>
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>切片不是"更快"，是"更不卡"</b><br>
       总工作量一样，切片甚至因为调度开销会<b>略慢</b>。
       换来的是：每一帧之间都留出了让浏览器处理输入和渲染的机会。<br>

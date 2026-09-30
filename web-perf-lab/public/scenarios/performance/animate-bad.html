@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>动画属性选择 · 问题版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   #mover {
     position: absolute;
@@ -92,7 +106,7 @@
       <tr>
         <td class="mono">width, height,<br>padding, margin,<br>left, top, font-size</td>
         <td>Layout + Paint + Composite</td>
-        <td><b style="color:#ffb4ae">最高</b></td>
+        <td><b style="color:var(--red)">最高</b></td>
       </tr>
       <tr>
         <td class="mono">color, background,<br>box-shadow, border-radius</td>
@@ -102,7 +116,7 @@
       <tr>
         <td class="mono">transform, opacity,<br>filter</td>
         <td>Composite</td>
-        <td><b style="color:#7ee787">最低</b></td>
+        <td><b style="color:var(--green)">最低</b></td>
       </tr>
     </table>
     <p class="hint" style="margin-top:10px">

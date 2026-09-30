@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lighthouse 综合评分 · 观察指南</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   .audit-row { display: grid; grid-template-columns: 1fr 90px 90px; gap: 8px;
                padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
@@ -64,7 +78,7 @@
       它把几十项审计加权算成四个分数，正好当"整合测试"：
       你在这里能一次看到前面学过的所有东西是怎么互相影响的。
     </p>
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>为什么这两个页面没有侧边观察清单</b><br>
       观察清单本身会往页面里塞 DOM 节点、加文本、可能引入对比度问题 ——
       <b>那会污染 Lighthouse 的评分</b>。所以这个场景的 bad/good 是干净的被测页面，
@@ -135,7 +149,7 @@
       </tr>
     </table>
 
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>别被"预计可省 XXX ms"骗了</b><br>
       Lighthouse 的预估是<b>单条独立测算</b>的，不能简单相加。
       它假设"其他都不变，只优化这一项"，所以把十条的预估值加起来，
@@ -165,7 +179,7 @@
       </tr>
     </table>
 
-    <div class="warn" style="background:#2d1a1b;border-color:var(--red);color:#ffb4ae">
+    <div class="warn" style="background:var(--warn-bg);border-color:var(--red);color:var(--warn-text)">
       <b>最容易被误用的地方：把分数当 KPI</b><br>
       见过太多团队为了刷分做无意义的事（比如把首屏图片删掉、
       把统计脚本延后到用户交互后加载）。<br>

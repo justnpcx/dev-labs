@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Service Worker 缓存 · 问题版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   .timeline { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
               line-height: 1.7; white-space: pre-wrap; }
@@ -46,7 +60,7 @@
       <code>fetch</code> 事件里你写的缓存策略。
       <b>没写策略 = 没装</b>。
     </div>
-    <div class="warn" style="background:#1a2430;border-color:var(--blue)">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent)">
       <b>⚠ SW 会一直赖在浏览器里</b><br>
       它不像普通 JS 刷新就没了。作用域内所有页面后续的请求都会经过它，
       <b>刷新、甚至重启浏览器都还在</b>。<br>
@@ -106,8 +120,8 @@
 
 <script src="/assets/lab.js"></script>
 <script>
-const SW_URL = '/sw-lab/bad/sw.js';
-const DATA_URL = '/sw-lab/bad/data.json?ms=1200';   // 固定 URL，缓存才能命中
+const SW_URL = '/cache/sw/bad/sw.js';
+const DATA_URL = '/cache/sw/bad/data.json?ms=1200';   // 固定 URL，缓存才能命中
 let seq = 0;
 
 function setState(text) {
@@ -120,17 +134,43 @@ async function registerSw() {
     return;
   }
   try {
-    const reg = await navigator.serviceWorker.register(SW_URL);
+    // ★ scope 显式写成不带尾斜杠的 /cache/sw/bad，这是有原因的：
+    // 本页 URL 是 /cache/sw/bad，而 SW 脚本在 /cache/sw/bad/sw.js，
+    // 浏览器默认给的作用域是脚本所在目录 /cache/sw/bad/ ——
+    // 作用域匹配要求"完全相等、或后面紧跟 /"，所以 /cache/sw/bad/ **覆盖不到**本页。
+    // 页面不被 SW 控制，navigator.serviceWorker.ready 也永远不 resolve。
+    //
+    // 而直接请求更宽的作用域会被浏览器拒绝（"not under the max scope allowed"），
+    // 必须由服务端在 sw.js 响应里发 Service-Worker-Allowed 头来授权
+    // （见 server.js 的 serveSwLab）。
+    const reg = await navigator.serviceWorker.register(SW_URL, { scope: '/cache/sw/bad' });
     setState(reg.active ? 'activated' : 'installing…');
     labLog(`SW 已注册，作用域：${reg.scope}`);
-    labLog('注意作用域是 /sw-lab/bad/ —— 只拦这个前缀，不影响其他 20 个场景');
-    navigator.serviceWorker.ready.then(() => {
-      setState('activated');
-      labLog('SW 已激活。去 Application 面板 → Cache Storage 看看：是空的');
-    });
+    labLog('作用域只覆盖 /cache/sw/bad/ —— 别的场景一点都不受影响');
+    await waitActivated(reg);
+    setState('activated');
+    labLog('SW 已激活。去 Application 面板 → Cache Storage 看看：是空的');
   } catch (e) {
     labLog(`注册失败：${e.message}`);
   }
+}
+
+/**
+ * 等 SW 进入 activated。
+ *
+ * 为什么不用 navigator.serviceWorker.ready：它只在"当前页面落在 SW 作用域内"
+ * 时才 resolve。这个坑很隐蔽 —— 如果 SW 脚本放在别的路径下（作用域不覆盖本页），
+ * ready 会**永远不 resolve**，页面状态就卡在 installing，而且不报任何错。
+ * 直接盯 registration 的状态变化更可靠。
+ */
+function waitActivated(reg) {
+  return new Promise((resolve) => {
+    const sw = reg.installing || reg.waiting || reg.active;
+    if (!sw || sw.state === 'activated') return resolve();
+    sw.addEventListener('statechange', () => {
+      if (sw.state === 'activated') resolve();
+    });
+  });
 }
 
 async function request() {

@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>前端性能演练场</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   .hero { text-align: center; padding: 34px 20px 10px; }
   .hero h1 { font-size: 24px; margin: 0 0 10px; }
@@ -60,11 +74,12 @@
 <div class="hero">
   <h1>前端性能演练场</h1>
   <p>
-    21 个场景，每个都有 <b style="color:#ffb4ae">问题版</b> 和
-    <b style="color:#7ee787">优化版</b> 两个独立页面。
+    21 个场景，每个都有 <b style="color:var(--red)">问题版</b> 和
+    <b style="color:var(--green)">优化版</b> 两个独立页面。
     开两个标签页并排对比，在 Chrome DevTools 里看差别。<br>
     <b>按难度分四级，建议从初级顺着往上走。</b>
   </p>
+  <div id="themeSlot" style="margin-top:16px"></div>
 </div>
 
 <div class="wrap">
@@ -286,5 +301,6 @@
 
 </div>
 
+<script src="/assets/lab.js"></script>
 </body>
 </html>

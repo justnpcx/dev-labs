@@ -396,18 +396,23 @@ function makePlaceholderFont(bytes) {
 }
 
 /**
- * /sw-lab/<mode>/{sw.js,data.json} —— Service Worker 场景专用。
+ * /cache/sw/<mode>/{sw.js,data.json} —— Service Worker 场景专用。
  *
- * 为什么单独开 /sw-lab/ 前缀：**Service Worker 的作用域由脚本所在路径决定**。
- * 放在 /sw-lab/<mode>/ 下就只拦截这个前缀，不会污染其他 18 个场景。
- * 如果脚本放在根目录，一个写坏的 SW 能把整个演练场缓存住 ——
- * 那是真的很难排查的故障（清缓存都不一定好使，得去 Application 面板注销）。
+ * 为什么把 SW 放在**场景页自己的路径下**（而不是单独的 /sw-lab/ 前缀）：
+ *   Service Worker 的作用域 = 脚本所在目录。脚本在 /cache/sw/bad/sw.js，
+ *   作用域就是 /cache/sw/bad/ —— 正好把场景页 /cache/sw/bad 和它的数据源
+ *   一起圈进去，别的一律不受影响。
  *
- * bad / good 用两个不同子路径，是为了让它们各自拥有独立作用域：
- * 同一个作用域只能有一个 SW，两个页面抢一个作用域会互相覆盖。
+ *   一开始写成 /sw-lab/bad/sw.js（页面在 /cache/sw/bad），结果页面落在作用域外：
+ *   虽然 SW 仍然按 URL 拦截 /sw-lab/ 下的请求，但 navigator.serviceWorker.ready
+ *   永远不 resolve（它要求"当前页面在作用域内"），页面状态卡在 installing。
+ *   放到同一条路径下就没这个歧义了。
+ *
+ * bad / good 用两个不同子路径，是因为同一个作用域只能有一个 SW ——
+ * 两个页面抢一个作用域会互相覆盖。
  */
 function serveSwLab(req, res, urlPath) {
-  const m = urlPath.match(/^\/sw-lab\/(bad|good)\/(sw\.js|data\.json)$/);
+  const m = urlPath.match(/^\/cache\/sw\/(bad|good)\/(sw\.js|data\.json)$/);
   if (!m) return false;
 
   const [, mode, file] = m;
@@ -418,6 +423,13 @@ function serveSwLab(req, res, urlPath) {
       'Content-Type': MIME['.js'],
       // SW 脚本本身绝不缓存，否则改了代码刷新不生效 —— 这是 SW 最常见的坑
       'Cache-Control': 'no-store',
+      // ★ 这个头是必须的，而且原因很反直觉：
+      // 浏览器给 SW 脚本规定的「最大作用域」= 脚本所在目录（这里是 /cache/sw/bad/）。
+      // 页面注册时如果请求一个**更宽**的作用域（/cache/sw/bad，少一个尾斜杠），
+      // 会被直接拒绝：
+      //   "The path of the provided scope is not under the max scope allowed"
+      // 想放宽就必须由服务端显式发这个头。它是服务端对"这个脚本可以管多宽"的授权。
+      'Service-Worker-Allowed': `/cache/sw/${mode}`,
     });
     return true;
   }
@@ -601,6 +613,24 @@ async function handleApi(req, res, url) {
     const n = Math.min(Number(url.searchParams.get('n') || 5000), 50000);
     return sendJson(res, { count: n, items: makeItems(n) },
                     { 'Cache-Control': 'no-store' });
+  }
+
+  // 渲染阻塞脚本：等 ms 毫秒后返回一小段合法 JS。
+  //
+  // 为什么需要它：优先级场景要制造"HTML 解析被卡住"，但用动态生成的 300KB
+  // 脚本会有个副作用 —— 服务端生成它是**同步 CPU 活**，Node 单线程会被它占住，
+  // 于是所有请求（包括我们要观察的那张图）都被拖慢。那样测出来的是服务端瓶颈，
+  // 不是浏览器的资源调度行为。
+  // 这个端点纯粹 setTimeout，服务端几乎零开销，只让浏览器真的等。
+  if (p === '/api/block.js') {
+    const ms = Math.min(Number(url.searchParams.get('ms') || 600), 5000);
+    await sleep(ms);
+    return send(res, 200,
+      '/* 阻塞脚本：解析到这里时 HTML 解析器必须停下来等它 */'
+      + 'window.__LAB_BLOCKED = (window.__LAB_BLOCKED || 0) + 1;', {
+        'Content-Type': MIME['.js'],
+        'Cache-Control': 'no-store',
+      });
   }
 
   // 延迟返回的占位字体。delay 决定 FOIT 有多长（见 makePlaceholderFont 的注释）。

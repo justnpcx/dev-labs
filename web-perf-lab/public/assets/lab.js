@@ -49,6 +49,68 @@ function labRequireLocalOrigin() {
   return false;
 }
 
+/* ─────────────────── 主题 ───────────────────
+ *
+ * 实际主题已经由 <head> 里的引导脚本写好了（那一步必须在样式表之前同步跑，
+ * 否则会闪一下）。这里只负责三件事：
+ *   1. 把切换控件注入页头
+ *   2. 用户点的时候改写偏好并重算
+ *   3. 偏好为 auto 时跟随系统实时变化
+ *
+ * 偏好存 localStorage，刷新后保持。三态：跟随系统 / 浅色 / 深色。
+ */
+const LAB_THEME_KEY = 'lab-theme';
+const LAB_THEME_NAME = { auto: '跟随系统', light: '浅色', dark: '深色' };
+
+function labResolveTheme(pref) {
+  if (pref !== 'auto') return pref;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function labApplyTheme(pref, persist) {
+  const root = document.documentElement;
+  root.dataset.themePref = pref;
+  root.dataset.theme = labResolveTheme(pref);
+  if (persist) {
+    try { localStorage.setItem(LAB_THEME_KEY, pref); } catch (e) { /* 隐私模式忽略 */ }
+  }
+  document.querySelectorAll('.theme-switch button').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.themePref === pref));
+  });
+}
+
+function labInjectThemeSwitch() {
+  // 场景页放页头最右边；索引页没有页头，放 hero 里预留的插槽
+  const host = document.querySelector('#themeSlot')
+            || document.querySelector('.lab-header')
+            || document.querySelector('.hero');
+  if (!host || host.querySelector('.theme-switch')) return;
+
+  const box = document.createElement('div');
+  box.className = 'theme-switch';
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', '主题');
+
+  ['auto', 'light', 'dark'].forEach((pref) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.themePref = pref;
+    b.textContent = LAB_THEME_NAME[pref];
+    b.addEventListener('click', () => labApplyTheme(pref, true));
+    box.appendChild(b);
+  });
+  host.appendChild(box);
+
+  // 只在 auto 模式下跟随系统。用户显式选了浅/深，就不该被系统设置覆盖。
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (document.documentElement.dataset.themePref === 'auto') labApplyTheme('auto', false);
+  });
+
+  labApplyTheme(document.documentElement.dataset.themePref || 'auto', false);
+}
+
+onLoad(labInjectThemeSwitch);
+
 /* ─────────────────── 难度分层 ───────────────────
  *
  * 21 个场景按"需要多少前置知识 + 要跨几层推理"分成四级，

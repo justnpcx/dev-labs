@@ -5,6 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>资源优先级 · 问题版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+<!-- 两个阻塞脚本：HTML 解析器必须停下来等它们下载完。
+     每个 700ms，串行执行 → 解析被卡住约 1.4 秒。
+     它们的作用是"把 LCP 图的发现时间推后"，模拟真实项目里
+     head 里那一堆同步资源。 -->
+<script src="/api/block.js?ms=700"></script>
+<script src="/api/block.js?ms=700&i=2"></script>
 </head>
 <body>
 
@@ -29,8 +49,8 @@
       <li>切到 <b>Performance</b> 面板录一次，看 <b>LCP</b> 标记落在哪个元素上、什么时候</li>
     </ol>
     <div class="expect">
-      预期：图片 Priority = <b>Low</b>，开始得很晚<br>
-      它是 LCP 元素，所以 LCP 被它拖到 <b>2s 以上</b>。
+      预期：图片 Priority = <b>Low</b>，<b>开始时间 ~0.8s</b> —— 排在阻塞脚本后面<br>
+      它是 LCP 元素，LCP 被拖到 <b>1.0s 左右</b>。
     </div>
     <div class="warn">
       <b>根因：<code>loading="lazy"</code> 用错了地方</b><br>
@@ -43,15 +63,18 @@
   <main class="card demo">
     <h2>演示</h2>
     <p class="hint">
-      下面这张图就是本页的 LCP 元素。它是 1200×800 的噪声图（压不动，体积大），
-      服务端还刻意延迟了 800ms 才响应。
+      下面这张图就是本页的 LCP 元素。它故意做成<b>小文件</b>（平滑渐变，几 KB）——
+      这样"什么时候<b>开始</b>下载"这个差异才不会被下载耗时掩盖掉。
+      页面上方还有两个各 700ms 的阻塞脚本，把它的发现时间推后了 1.4 秒。
     </p>
 
     <img id="hero"
-         src="/api/image?w=1200&h=800&noise=1&delay=800&nocache=1"
+         src="/api/image?w=1200&h=800&noise=0&delay=200&nocache=1"
          loading="lazy"
          style="width:100%;height:auto;border-radius:6px;margin:12px 0"
          alt="LCP 大图">
+
+    <pre id="log">等待开始…</pre>
 
     <h3>问题出在这一行</h3>
     <pre class="logbox">&lt;!-- 首屏 LCP 图，却加了 loading="lazy" --&gt;

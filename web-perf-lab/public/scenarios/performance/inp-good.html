@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>交互延迟 INP · 优化版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 </head>
 <body>
 
@@ -29,8 +43,8 @@
       <li>重点：<b>总耗时几乎没变</b>，但交互响应快了一个数量级</li>
     </ol>
     <div class="expect">
-      预期：交互 duration 从 <b>700ms+ 降到几十毫秒</b><br>
-      总计算量一样，INP 却合格了。
+      预期：交互 duration 从 <b>700ms+ 降到 ~100ms 量级</b>（= 单片的长度）<br>
+      总计算量一样，INP 却降了一个数量级。
     </div>
     <div class="warn">
       <b>这不是"优化了计算"，是"优化了排队"</b><br>
@@ -79,7 +93,7 @@ function yieldToMain() {
           <td>只在空闲时跑，<b>不保证</b>及时执行 —— 不适合有 deadline 的活</td></tr>
     </table>
 
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>更彻底的做法：干脆别放在主线程</b><br>
       如果这 700ms 是纯计算（不碰 DOM），扔进 <b>Web Worker</b> 才是终局方案 ——
       主线程一点都不用让。<br>

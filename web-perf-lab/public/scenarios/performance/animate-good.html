@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>动画属性选择 · 优化版</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
   #mover {
     position: absolute;
@@ -52,7 +66,7 @@
       预期：<b>Main 轨道上没有 Layout</b>，动画跑在合成线程上<br>
       即使主线程被 JS 占住，这个动画<b>照样流畅</b>。
     </div>
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>为什么 transform 能跑在合成线程</b><br>
       元素被提升为独立合成层后，浏览器会把它<b>预先绘制成一张纹理</b>。
       移动它只需要 GPU 把这张纹理挪个位置 —— 不需要重新计算布局，
@@ -120,7 +134,7 @@ mover.style.transform = `translateX(${x}px) translateY(${y}px)`;
 );
 // 声明式，由浏览器调度 —— 比手写 rAF 循环更省</pre>
 
-    <div class="warn" style="background:#2d1a1b;border-color:var(--red);color:#ffb4ae">
+    <div class="warn" style="background:var(--warn-bg);border-color:var(--red);color:var(--warn-text)">
       <b>will-change 别滥用</b><br>
       每个合成层都要占显存。<br>
       给几十个元素加 <code>will-change: transform</code>，

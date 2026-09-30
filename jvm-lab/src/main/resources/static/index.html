@@ -4,58 +4,191 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JVM 演练场</title>
+<script>
+/* 主题引导。必须在样式表之前、同步执行 —— 否则会先按默认主题画一帧再切换，
+   用户能看到明显的闪白/闪黑（FOUC）。这是主题方案里最容易忽略的一步。
+   只做一件事：把「用户偏好」解析成「实际主题」，写到 <html data-theme> 上。 */
+(function () {
+  var PREF_KEY = 'jvmlab-theme';
+  var pref = 'auto';
+  try { pref = localStorage.getItem(PREF_KEY) || 'auto'; } catch (e) { /* 隐私模式下会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  var resolved = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 <style>
-  :root {
-    --bg: #0f1419;
-    --panel: #161b22;
-    --panel2: #1c2430;
-    --border: #2a3441;
-    --text: #d7dde5;
-    --dim: #7d8899;
-    --green: #3fb950;
-    --yellow: #d29922;
-    --red: #f85149;
-    --blue: #58a6ff;
-    --purple: #bc8cff;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: 18px;
-    background: var(--bg); color: var(--text);
-    font: 13px/1.5 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  }
-  h1 { font-size: 17px; margin: 0; font-weight: 600; }
-  h2 { font-size: 12px; margin: 0 0 10px; color: var(--dim); font-weight: 600;
-       text-transform: uppercase; letter-spacing: .06em; }
-  .top { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-  .pill { padding: 3px 10px; border-radius: 20px; font-size: 11px;
-          background: var(--panel2); border: 1px solid var(--border); }
-  .pill.ok { color: var(--green); border-color: #1f4d29; }
-  .pill.bad { color: var(--red); border-color: #5c2223; }
-  .spacer { flex: 1; }
-  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-  .panel { background: var(--panel); border: 1px solid var(--border);
-           border-radius: 8px; padding: 14px; }
-  .wide { grid-column: 1 / -1; }
+  /* ═══════════════════════════════════════════════════════════
+     设计令牌。两套主题共用同一组变量名，组件只引用变量、不写死颜色。
+     ═══════════════════════════════════════════════════════════ */
 
-  /* 指标行 */
+  /* 深色是兜底（JS 没跑起来时也至少能看） */
+  :root, :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg:          #12161c;   /* 比纯黑浅一点，长时间盯着不刺眼 */
+    --panel:       #1a1f27;
+    --panel2:      #222831;
+    --border:      #2e3742;
+    --border-soft: #262d36;
+
+    --text:        #c6ced8;   /* 刻意不用纯白：对比度从 ~13:1 降到 ~10:1 */
+    --text-strong: #e3e9f0;
+    --dim:         #8a93a0;
+
+    --accent:      #58a6ff;
+    --green:       #3fb950;
+    --yellow:      #d29922;
+    --red:         #f85149;
+    --purple:      #bc8cff;
+
+    --accent-bg:   #12202e;
+    --green-bg:    #12261a;
+    --red-bg:      #2d1a1b;
+    --yellow-bg:   #2b2312;
+    --shadow:      none;
+    --code-bg:     #0b0f14;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --bg:          #f6f8fa;
+    --panel:       #ffffff;
+    --panel2:      #eef1f4;
+    --border:      #d0d7de;
+    --border-soft: #e6eaee;
+
+    --text:        #2f363d;
+    --text-strong: #1f2328;
+    --dim:         #6a737d;
+
+    /* 浅色底上要用更深的强调色，否则对比度不够（WCAG AA 要求 ≥ 4.5:1） */
+    --accent:      #0969da;
+    --green:       #1a7f37;
+    --yellow:      #9a6700;
+    --red:         #cf222e;
+    --purple:      #8250df;
+
+    --accent-bg:   #ddf4ff;
+    --green-bg:    #dafbe1;
+    --red-bg:      #ffebe9;
+    --yellow-bg:   #fff8c5;
+    --shadow:      0 1px 2px rgba(31, 35, 40, .07);
+    --code-bg:     #f6f8fa;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; padding: 0 20px 40px;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    transition: background-color .18s ease, color .18s ease;
+  }
+
+  /* ─────────────── 顶栏 ─────────────── */
+  .topbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 16px 0 14px; margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; margin-right: 6px; }
+  .brand .logo {
+    width: 34px; height: 34px; border-radius: 8px; flex: none;
+    display: grid; place-items: center;
+    background: var(--accent-bg); color: var(--accent);
+    border: 1px solid var(--border);
+    font: 700 11px/1 ui-monospace, Consolas, monospace; letter-spacing: .02em;
+  }
+  .brand h1 { font-size: 16px; margin: 0; font-weight: 600; color: var(--text-strong); }
+  .brand .sub { font-size: 11.5px; color: var(--dim); margin: 1px 0 0; }
+  .spacer { flex: 1; }
+
+  h2 {
+    font-size: 12px; margin: 0 0 12px; color: var(--dim); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+
+  /* ─────────────── 状态徽章 / 按钮 ─────────────── */
+  .pill {
+    padding: 3px 10px; border-radius: 20px; font-size: 11px;
+    background: var(--panel2); border: 1px solid var(--border); color: var(--dim);
+  }
+  .pill.ok  { color: var(--green); border-color: var(--green); background: var(--green-bg); }
+  .pill.bad { color: var(--red);   border-color: var(--red);   background: var(--red-bg); }
+
+  button {
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 11px; font-size: 12px; cursor: pointer;
+    font-family: inherit; transition: background .15s, border-color .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  button.danger { color: var(--red); border-color: var(--red); background: var(--red-bg); }
+  button.reset  { color: var(--green); border-color: var(--green); background: var(--green-bg); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* 主题切换：三段式。用 aria-pressed 表达状态，别只靠颜色 */
+  .theme-switch {
+    display: inline-flex; border: 1px solid var(--border);
+    border-radius: 7px; overflow: hidden; background: var(--panel2);
+  }
+  .theme-switch button {
+    border: 0; border-radius: 0; background: transparent;
+    padding: 5px 10px; font-size: 11.5px; color: var(--dim);
+  }
+  .theme-switch button + button { border-left: 1px solid var(--border); }
+  .theme-switch button[aria-pressed="true"] {
+    background: var(--accent-bg); color: var(--accent); font-weight: 600;
+  }
+
+  /* ─────────────── 布局 ─────────────── */
+  .wrap { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
+
+  /* KPI 行：固定 4 列，等高。窄屏降 2 列 / 1 列。
+     用固定列数而不是 auto-fit —— auto-fit 会让 4 个块在不同宽度下
+     变成 3+1、2+2 这种参差不齐的排布，这正是之前看起来乱的原因。 */
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 1080px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 560px)  { .kpis { grid-template-columns: 1fr; } }
+
+  /* 两栏行 */
+  .duo { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 860px) { .duo { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; box-shadow: var(--shadow);
+    transition: background-color .18s ease, border-color .18s ease;
+  }
+  /* KPI 卡内部用 flex 纵向排，保证四张卡等高时内容底部对齐 */
+  .kpi { display: flex; flex-direction: column; }
+  .kpi .big { margin-bottom: 2px; }
+  .kpi .hint { margin-top: auto; padding-top: 10px; }   /* 提示吸底，四张卡对齐 */
+
+  /* ─────────────── 指标 ─────────────── */
   .metric { display: flex; justify-content: space-between; align-items: baseline;
-            padding: 5px 0; border-bottom: 1px dashed #222a35; }
+            padding: 5px 0; border-bottom: 1px dashed var(--border-soft); }
   .metric:last-child { border-bottom: none; }
   .metric .k { color: var(--dim); }
-  .metric .v { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 13px; }
-  .big { font-size: 22px; font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+  .metric .v { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 13px; color: var(--text-strong); }
+  .big { font-size: 22px; font-weight: 600; font-family: ui-monospace, Consolas, monospace;
+         color: var(--text-strong); }
+  .unit { font-size: 12px; color: var(--dim); font-weight: 400; margin-left: 3px; }
 
-  /* 进度条 */
-  .bar { height: 6px; background: #222a35; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin-top: 7px; }
   .bar > i { display: block; height: 100%; width: 0; transition: width .3s, background .3s; }
 
   canvas { display: block; width: 100%; height: 52px; margin-top: 8px; }
 
-  /* 按钮 */
+  /* ─────────────── 场景按钮 ─────────────── */
   .btns { display: flex; flex-wrap: wrap; gap: 7px; }
 
-  /* 难度分组表头。flex-basis:100% 强制换行，把按钮分成一段一段的 */
   .btns .lvlhead {
     flex-basis: 100%; width: 100%;
     font-size: 11.5px; color: var(--dim); letter-spacing: .05em;
@@ -65,187 +198,182 @@
   .btns .lvlhead:first-child { margin-top: 0; }
   .btns .lvlhead .lv {
     display: inline-block; padding: 1px 8px; border-radius: 4px;
-    border: 1px solid; margin-right: 8px; letter-spacing: .04em;
+    border: 1px solid; margin-right: 8px; letter-spacing: .04em; font-weight: 600;
   }
-  .lv1 { color: #7ee787; border-color: #1f4d29; background: #12261a; }
-  .lv2 { color: #79c0ff; border-color: #1f3d5c; background: #12202e; }
-  .lv3 { color: #ffc86b; border-color: #5c4a1f; background: #2b2312; }
-  .lv4 { color: #ff9b8f; border-color: #5c2f22; background: #2d1a16; }
-  button {
-    background: var(--panel2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px;
-    padding: 6px 11px; font-size: 12px; cursor: pointer;
-    font-family: inherit; transition: .15s;
+  .lv1 { color: var(--green);  border-color: var(--green);  background: var(--green-bg); }
+  .lv2 { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+  .lv3 { color: var(--yellow); border-color: var(--yellow); background: var(--yellow-bg); }
+  .lv4 { color: var(--red);    border-color: var(--red);    background: var(--red-bg); }
+
+  .btns button[data-code]::after { content: 'ⓘ'; margin-left: 5px; opacity: .38; font-size: 10px; }
+  .btns button[data-code]:hover::after { opacity: .85; }
+
+  /* ─────────────── 文件面板 ─────────────── */
+  .filebar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 10px; }
+  .filebar label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+  .filepane { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 10px; }
+  @media (max-width: 860px) { .filepane { grid-template-columns: 1fr; } }
+
+  .filelist { border: 1px solid var(--border); border-radius: 8px;
+              max-height: 320px; overflow-y: auto; background: var(--panel2); }
+  .fileitem { padding: 7px 10px; font-size: 12px; cursor: pointer;
+              border-bottom: 1px solid var(--border-soft); display: flex; gap: 8px; }
+  .fileitem:last-child { border-bottom: none; }
+  .fileitem:hover { background: var(--accent-bg); }
+  .fileitem.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .fileitem .sz { margin-left: auto; color: var(--dim); font-size: 11px; font-family: ui-monospace, monospace; }
+  .filelist .empty { padding: 12px; color: var(--dim); font-size: 12px; }
+
+  .fileview { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel2); }
+  .filehead { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+              border-bottom: 1px solid var(--border); font-size: 12px; }
+  .filehead .fname { font-family: ui-monospace, monospace; color: var(--text-strong); }
+
+  .logbox {
+    margin: 0; padding: 11px 13px; max-height: 320px; overflow: auto;
+    background: var(--code-bg); color: var(--text);
+    font: 12px/1.62 ui-monospace, "SF Mono", Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
   }
-  button:hover { background: #26313f; border-color: #3a4757; }
-  button:active { transform: translateY(1px); }
-  button.danger { color: #ffb4ae; border-color: #5c2223; }
-  button.danger:hover { background: #2d1a1b; }
-  button.reset { color: #7ee787; border-color: #1f4d29; }
-  button.reset:hover { background: #12261a; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
+  .logbox .young { color: var(--yellow); }
+  .logbox .full  { color: var(--red); }
+  .logbox .oom   { color: var(--red); font-weight: 600; }
 
-  .hint { color: var(--dim); font-size: 11px; margin-top: 7px; line-height: 1.5; }
-  .args { font-family: ui-monospace, Consolas, monospace; font-size: 11px;
-          color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+  .args {
+    font: 12px/1.7 ui-monospace, Consolas, monospace; color: var(--dim);
+    word-break: break-all; padding: 10px; border-radius: 8px;
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+  }
 
-  .alert { background: #2d1a1b; border: 1px solid #5c2223; color: #ffb4ae;
-           padding: 9px 12px; border-radius: 6px; margin-bottom: 12px; display: none; }
+  /* ─────────────── 提示 / 告警 ─────────────── */
+  .hint { font-size: 12px; color: var(--dim); line-height: 1.65; margin-top: 10px; }
+  .hint b { color: var(--text); font-weight: 600; }
+  .hint code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+
+  .alert { display: none; margin-top: 12px; padding: 10px 13px; border-radius: 8px;
+           font-size: 12.5px; border: 1px solid var(--red); background: var(--red-bg); color: var(--red); }
   .alert.show { display: block; }
 
-  /* 日志框：输出面板和文件查看器共用。
-     注意 overflow:auto 不能漏 —— 只设 max-height 而不设 overflow，
-     内容不会滚动，会直接顶出面板边界。 */
-  pre.logbox {
-    background: #0b0f14; border: 1px solid var(--border); border-radius: 6px;
-    padding: 11px; margin: 0; overflow: auto;
-    font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 11.5px;
-    line-height: 1.55; color: #a9b6c4;
-    white-space: pre-wrap; word-break: break-all;
-    overscroll-behavior: contain;
-  }
-  pre#out { max-height: 300px; }
-
-  /* 日志与快照面板 */
-  .filebar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-  .filebar label { display: flex; align-items: center; gap: 5px;
-                   font-size: 12px; color: var(--dim); cursor: pointer; }
-  .filepane { display: grid; grid-template-columns: 270px 1fr; gap: 12px; }
-  .filelist { height: 380px; overflow: auto;
-              border: 1px solid var(--border); border-radius: 6px; background: #0b0f14; }
-  .fileitem { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid #1a222c; }
-  .fileitem:last-child { border-bottom: none; }
-  .fileitem:hover { background: #161d26; }
-  .fileitem.active { background: #1c2a38; border-left: 3px solid var(--blue); }
-  .fileitem .fn { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
-                  word-break: break-all; }
-  .fileitem .fm { color: var(--dim); font-size: 10.5px; margin-top: 2px; }
-  /* 固定高度 + 让内部 pre 用 flex 撑满，两栏高度才能对齐 */
-  .fileview { display: flex; flex-direction: column; min-width: 0; height: 380px; }
-  .filehead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-              font-size: 12px; color: var(--dim); min-height: 26px; flex: none; }
-  .filehead .fname { font-family: ui-monospace, Consolas, monospace; color: var(--text);
-                     min-width: 0;              /* flex 子项默认 min-width:auto，不加这行省略号不生效 */
-                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* min-height:0 是关键 —— flex 子项默认 min-height:auto，不改成 0 就压不下去，滚动条也不会出现 */
-  pre#fileContent { flex: 1; min-height: 0; }
-
-  @media (max-width: 760px) {
-    .filepane { grid-template-columns: 1fr; }
-    .filelist, .fileview { height: 280px; }
-  }
-
-  .hl-pause { color: #ffd479; }
-  .hl-full  { color: #ff9b8f; font-weight: 600; }
-  .hl-oom   { color: #ff7b72; font-weight: 600; }
-  .hl-thread { color: #79c0ff; font-weight: 600; }
-  .empty { color: var(--dim); padding: 14px; font-size: 12px; }
-
-  /* 悬停代码提示：鼠标停在场景按钮上，浮出对应的核心代码 */
+  /* ─────────────── 悬停代码浮层 ─────────────── */
   .codetip {
-    position: fixed; z-index: 200; display: none;
-    max-width: 660px; min-width: 320px;
-    background: #0b0f14; border: 1px solid #3a4757; border-radius: 8px;
-    padding: 12px 14px;
-    box-shadow: 0 10px 32px rgba(0,0,0,.65);
-    /* 关键：不能捕获鼠标，否则会挡住按钮导致提示闪烁 */
-    pointer-events: none;
+    display: none; position: fixed; z-index: 50; max-width: 560px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
   }
-  .codetip.show { display: block; }
   .codetip .tiphead {
-    font-size: 11px; color: var(--blue); margin-bottom: 8px;
-    font-family: ui-monospace, Consolas, monospace;
+    font-size: 11px; color: var(--dim); margin-bottom: 8px;
+    padding-bottom: 7px; border-bottom: 1px solid var(--border-soft);
+    font-family: ui-monospace, monospace;
   }
   .codetip pre {
     margin: 0; font-size: 11.5px; line-height: 1.62;
     font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    color: #a9b6c4; white-space: pre; overflow-x: auto;
-    max-height: 340px;
+    color: var(--text); white-space: pre; overflow-x: auto; max-height: 340px;
   }
-  .codetip .hl-star { color: #ffd479; font-weight: 600; }
   .codetip .tipnote {
     font-size: 11px; color: var(--dim); line-height: 1.6;
-    margin-top: 9px; padding-top: 8px; border-top: 1px dashed #222a35;
+    margin-top: 9px; padding-top: 8px; border-top: 1px dashed var(--border-soft);
   }
-  .codetip .tipnote b { color: #ffb4ae; font-weight: 600; }
-  /* 有代码提示的按钮加个小标记 */
-  .btns button[data-code]::after {
-    content: 'ⓘ'; margin-left: 5px; opacity: .38; font-size: 10px;
+  .codetip .tipnote b { color: var(--red); font-weight: 600; }
+
+  /* 尊重「减少动态效果」的系统设置 */
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
   }
-  .btns button[data-code]:hover::after { opacity: .85; }
 </style>
 </head>
 <body>
 
-<div class="top">
-  <h1>JVM 演练场</h1>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">JVM</span>
+    <div>
+      <h1>JVM 演练场</h1>
+      <p class="sub">容器化的 JVM 现象复现环境 · 14 个现象 · 四级难度</p>
+    </div>
+  </div>
+
   <span class="pill" id="conn">连接中…</span>
   <span class="pill" id="uptime"></span>
   <span class="spacer"></span>
+
+  <div class="theme-switch" role="group" aria-label="主题">
+    <button type="button" data-theme-pref="auto"  aria-pressed="false">跟随系统</button>
+    <button type="button" data-theme-pref="light" aria-pressed="false">浅色</button>
+    <button type="button" data-theme-pref="dark"  aria-pressed="false">深色</button>
+  </div>
+
   <button class="reset" onclick="hit('/reset','POST')">复位（清空所有泄漏）</button>
   <button onclick="hit('/status')">刷新</button>
-</div>
+</header>
 
 <div class="alert" id="alert"></div>
 
-<div class="grid">
+<main class="wrap">
 
-  <div class="panel">
-    <h2>堆内存 · Heap</h2>
-    <div class="big" id="heapBig">—</div>
-    <div class="bar"><i id="heapBar"></i></div>
-    <canvas id="heapChart"></canvas>
-    <div class="hint" id="heapHint"></div>
-  </div>
+  <!-- ── KPI 行：四个核心指标，固定 4 列、等高 ── -->
+  <section class="kpis">
+    <div class="panel kpi">
+      <h2>堆内存 · Heap</h2>
+      <div class="big" id="heapBig">—</div>
+      <div class="bar"><i id="heapBar"></i></div>
+      <canvas id="heapChart"></canvas>
+      <div class="hint" id="heapHint"></div>
+    </div>
 
-  <div class="panel">
-    <h2>元空间 · Metaspace</h2>
-    <div class="big" id="metaBig">—</div>
-    <div class="bar"><i id="metaBar"></i></div>
-    <canvas id="metaChart"></canvas>
-    <div class="hint">类元数据。不在堆里，heap dump 看不到它。<br>
-      满了报 <code>OutOfMemoryError: Metaspace</code></div>
-  </div>
+    <div class="panel kpi">
+      <h2>元空间 · Metaspace</h2>
+      <div class="big" id="metaBig">—</div>
+      <div class="bar"><i id="metaBar"></i></div>
+      <canvas id="metaChart"></canvas>
+      <div class="hint">类元数据，不在堆里 —— heap dump 看不到它。满了报
+        <code>OutOfMemoryError: Metaspace</code></div>
+    </div>
 
-  <div class="panel">
-    <h2>堆外直接内存 · Direct</h2>
-    <div class="big" id="directBig">—</div>
-    <div class="bar"><i id="directBar"></i></div>
-    <div class="hint">同样不在堆里，<code>-Xmx</code> 管不到，只看
-      <code>-XX:MaxDirectMemorySize</code></div>
-  </div>
+    <div class="panel kpi">
+      <h2>堆外直接内存 · Direct</h2>
+      <div class="big" id="directBig">—</div>
+      <div class="bar"><i id="directBar"></i></div>
+      <canvas id="directChart"></canvas>
+      <div class="hint">同样不在堆里，<code>-Xmx</code> 管不到它，
+        只看 <code>-XX:MaxDirectMemorySize</code></div>
+    </div>
 
-  <div class="panel">
-    <h2>线程</h2>
-    <div class="metric"><span class="k">当前</span><span class="v" id="thCount">—</span></div>
-    <div class="metric"><span class="k">峰值</span><span class="v" id="thPeak">—</span></div>
-    <div class="metric"><span class="k">累计创建</span><span class="v" id="thTotal">—</span></div>
-    <div class="metric"><span class="k">死锁线程</span><span class="v" id="thDead">—</span></div>
-    <div class="hint">容器 <code>pids.max</code> = <span id="pidsMax">—</span>，
-      超了就报 <code>unable to create new native thread</code></div>
-  </div>
+    <div class="panel kpi">
+      <h2>线程</h2>
+      <div class="metric"><span class="k">当前</span><span class="v" id="thCount">—</span></div>
+      <div class="metric"><span class="k">峰值</span><span class="v" id="thPeak">—</span></div>
+      <div class="metric"><span class="k">累计创建</span><span class="v" id="thTotal">—</span></div>
+      <div class="metric"><span class="k">死锁线程</span><span class="v" id="thDead">—</span></div>
+      <div class="hint">容器 <code>pids.max</code> = <span id="pidsMax">—</span>，
+        超了就报 <code>unable to create new native thread</code></div>
+    </div>
+  </section>
 
-  <div class="panel">
-    <h2>GC</h2>
-    <div id="gcList"></div>
-    <div class="hint">次数暴涨但每次回收量极低 = GC 空转。<br>
-      用 <code>./lab.sh gc</code> 看 GC 日志详情</div>
-  </div>
+  <!-- ── 两栏：GC / 隔离边界 ── -->
+  <section class="duo">
+    <div class="panel">
+      <h2>GC</h2>
+      <div id="gcList"></div>
+      <div class="hint">用 <code>./lab.sh gc</code> 看 GC 日志详情</div>
+    </div>
 
-  <div class="panel">
-    <h2>隔离边界（容器 cgroup）</h2>
-    <div class="metric"><span class="k">内存上限</span><span class="v" id="cMem">—</span></div>
-    <div class="metric"><span class="k">容器已用</span><span class="v" id="cUsed">—</span></div>
-    <div class="metric"><span class="k">历史峰值</span><span class="v" id="cPeak">—</span></div>
-    <div class="metric"><span class="k">swap 上限</span><span class="v" id="cSwap">—</span></div>
-    <div class="metric"><span class="k">进程数上限</span><span class="v" id="cPids">—</span></div>
-    <div class="metric"><span class="k">CPU 配额</span><span class="v" id="cCpu">—</span></div>
-    <div class="metric"><span class="k">OOM kill 次数</span><span class="v" id="cOom">—</span></div>
-    <div class="hint">这些数字是从容器内读 cgroup 文件得到的，
-      是"限制到底生效没有"的唯一可信来源</div>
-  </div>
+    <div class="panel">
+      <h2>隔离边界（容器 cgroup）</h2>
+      <div class="metric"><span class="k">内存上限</span><span class="v" id="cMem">—</span></div>
+      <div class="metric"><span class="k">容器已用</span><span class="v" id="cUsed">—</span></div>
+      <div class="metric"><span class="k">历史峰值</span><span class="v" id="cPeak">—</span></div>
+      <div class="metric"><span class="k">swap 上限</span><span class="v" id="cSwap">—</span></div>
+      <div class="metric"><span class="k">进程数上限</span><span class="v" id="cPids">—</span></div>
+      <div class="metric"><span class="k">CPU 配额</span><span class="v" id="cCpu">—</span></div>
+      <div class="metric"><span class="k">OOM kill 次数</span><span class="v" id="cOom">—</span></div>
+      <div class="hint">这些数字是从容器内读 cgroup 文件得到的，
+        是「限制到底生效没有」的唯一可信来源</div>
+    </div>
+  </section>
 
-  <div class="panel wide">
+  <!-- ── 触发场景 ── -->
+  <section class="panel">
     <h2>触发场景</h2>
     <div class="btns" id="scenarioBtns"></div>
     <div class="hint">
@@ -259,9 +387,10 @@
       当前默认 G1 下只会一直空转不报错。<br>
       线程池 / 锁竞争 / JIT 这三个场景也都能用 <code>./lab.sh trigger &lt;名字&gt;</code> 触发。
     </div>
-  </div>
+  </section>
 
-  <div class="panel wide">
+  <!-- ── 日志与快照 ── -->
+  <section class="panel">
     <h2>日志与快照</h2>
     <div class="filebar">
       <button onclick="loadFiles()">刷新列表</button>
@@ -270,7 +399,7 @@
       <button onclick="makeDump(false)">生成堆快照（含垃圾）</button>
       <label><input type="checkbox" id="autoRefresh" onchange="toggleAuto()"> 自动刷新（2 秒）</label>
       <span class="spacer"></span>
-      <span class="hint" id="fileHint"></span>
+      <span class="hint" id="fileHint" style="margin:0"></span>
     </div>
     <div class="filepane">
       <div class="filelist" id="fileList"><div class="empty">加载中…</div></div>
@@ -292,25 +421,37 @@
       <b>注意</b>：每次堆快照约 235MB，会自动写到宿主磁盘，记得定期
       <code>./lab.sh clean</code>。
     </div>
-  </div>
+  </section>
 
-  <div class="panel wide">
+  <!-- ── 输出 ── -->
+  <section class="panel">
     <h2>输出</h2>
     <pre id="out" class="logbox">点上面的按钮试试。</pre>
-  </div>
+  </section>
 
-  <div class="panel wide">
+  <!-- ── JVM 参数 ── -->
+  <section class="panel">
     <h2>实际生效的 JVM 参数</h2>
     <div class="args" id="args">—</div>
     <div class="hint">这是 <code>RuntimeMXBean.getInputArguments()</code> 的返回值 ——
       你以为设了的参数，不一定真的生效。改参数用 <code>./lab.sh restart &lt;profile&gt;</code></div>
-  </div>
+  </section>
 
-</div>
+</main>
 
 <script>
 const MAXPTS = 60;
 const hist = { heap: [], meta: [], direct: [] };
+let lastSnapshot = null;      // 主题切换时重画曲线要用
+
+/* 只重画曲线，不重新采数据 —— 否则每次切主题都会往 hist 里多塞一个点，
+   曲线会莫名其妙地"跳"一下。canvas 不认识 CSS 变量，只能手动重画。 */
+function redrawCharts() {
+  if (!lastSnapshot) return;
+  drawChart('heapChart', hist.heap, lastSnapshot.heap.maxMb, '--accent');
+  drawChart('metaChart', hist.meta, lastSnapshot.metaspace.maxMb, '--purple');
+  drawChart('directChart', hist.direct, 64, '--green');
+}
 
 function pct(used, max) { return max > 0 ? (used * 100 / max) : 0; }
 
@@ -321,7 +462,21 @@ function color(p) {
 }
 
 // 画一条滚动折线。用原生 canvas，不引任何图表库 —— 少一个依赖少一个坑。
-function drawChart(id, data, max, stroke) {
+/* 读当前主题下的 CSS 变量值。
+   曲线颜色必须走这里 —— 写死 rgb(88,166,255) 在浅色底上对比度只有 2.6:1，
+   基本看不清；而 canvas 又不会自己跟着 CSS 变量变，只能重画。 */
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/** '#rrggbb' → 'rgba(r,g,b,a)' */
+function hexToRgba(hex, a) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
+  if (!m) return hex;
+  return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
+}
+
+function drawChart(id, data, max, colorVar) {
   const c = document.getElementById(id);
   if (!c) return;
   const dpr = window.devicePixelRatio || 1;
@@ -331,13 +486,14 @@ function drawChart(id, data, max, stroke) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
-  // 参考线：上限
-  ctx.strokeStyle = '#2a3441';
+  // 参考线：上限。同样跟随主题
+  ctx.strokeStyle = cssVar('--border');
   ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, 0.5); ctx.lineTo(w, 0.5); ctx.stroke();
 
   if (data.length < 2 || max <= 0) return;
 
+  const stroke = cssVar(colorVar) || '#58a6ff';
   const n = MAXPTS;
   const stepX = w / (n - 1);
   const x0 = w - (data.length - 1) * stepX;
@@ -356,7 +512,7 @@ function drawChart(id, data, max, stroke) {
   ctx.lineTo(x0 + (data.length - 1) * stepX, h);
   ctx.lineTo(x0, h);
   ctx.closePath();
-  ctx.fillStyle = stroke.replace('rgb', 'rgba').replace(')', ',.13)');
+  ctx.fillStyle = hexToRgba(stroke, 0.13);
   ctx.fill();
 }
 
@@ -369,6 +525,7 @@ function setBar(id, p) {
 let alertDismissed = false;
 
 function render(d) {
+  lastSnapshot = d;                 // 主题切换时要靠它重画曲线
   const hp = d.heap, mp = d.metaspace, db = d.directBuffer || {};
   const hpP = pct(hp.usedMb, hp.maxMb);
 
@@ -376,7 +533,7 @@ function render(d) {
     hp.usedMb + ' / ' + hp.maxMb + ' MB  (' + hpP.toFixed(1) + '%)';
   setBar('heapBar', hpP);
   hist.heap.push(hp.usedMb); if (hist.heap.length > MAXPTS) hist.heap.shift();
-  drawChart('heapChart', hist.heap, hp.maxMb, 'rgb(88,166,255)');
+  drawChart('heapChart', hist.heap, hp.maxMb, '--accent');
   document.getElementById('heapHint').textContent =
     '剩余 ' + (hp.maxMb - hp.usedMb) + ' MB。超过 85% 就开始危险了 —— 见 CHEATSHEET 的 GC 空转专节。';
 
@@ -385,7 +542,7 @@ function render(d) {
     mp.usedMb + ' / ' + (mp.maxMb < 0 ? '无上限' : mp.maxMb + ' MB');
   setBar('metaBar', mpP);
   hist.meta.push(mp.usedMb); if (hist.meta.length > MAXPTS) hist.meta.shift();
-  drawChart('metaChart', hist.meta, mp.maxMb, 'rgb(188,140,255)');
+  drawChart('metaChart', hist.meta, mp.maxMb, '--purple');
 
   // 直接内存没有显式的 max 字段，用 -Xmx 当参考刻度
   const dbP = pct(db.usedMb || 0, 64);
@@ -393,6 +550,7 @@ function render(d) {
     (db.usedMb || 0) + ' MB / ' + (db.bufferCount || 0) + ' 个 buffer';
   setBar('directBar', dbP);
   hist.direct.push(db.usedMb || 0); if (hist.direct.length > MAXPTS) hist.direct.shift();
+  drawChart('directChart', hist.direct, 64, '--green');
 
   const th = d.threads;
   document.getElementById('thCount').textContent = th.count;
@@ -1015,7 +1173,7 @@ function renderScenarioButtons() {
 renderScenarioButtons();
 
 // 复位按钮 + 快照/线程栈按钮也挂上提示
-document.querySelectorAll('.top button.reset').forEach(b => attachTip(b, RESET_CODE));
+document.querySelectorAll('.topbar button.reset').forEach(b => attachTip(b, RESET_CODE));
 document.querySelectorAll('.filebar button').forEach(b => {
   const t = b.textContent.trim();
   if (t.includes('live')) attachTip(b, DUMP_CODES.live);
@@ -1027,6 +1185,49 @@ document.querySelectorAll('.filebar button').forEach(b => {
 window.addEventListener('scroll', hideTip, { passive: true });
 </script>
 <div id="codeTip" class="codetip"></div>
+
+
+<script>
+/* ── 主题切换 ──
+   实际主题已经由 <head> 里的引导脚本写好了，这里只负责：
+     1. 把当前偏好同步到按钮的 aria-pressed
+     2. 用户点按钮时改写偏好 + 重算实际主题
+     3. 偏好为 auto 时，跟随系统实时变化 */
+(function () {
+  var PREF_KEY = 'jvmlab-theme';
+  var root = document.documentElement;
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  var buttons = document.querySelectorAll('.theme-switch button');
+
+  function resolve(pref) {
+    return pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  }
+
+  function apply(pref, persist) {
+    root.dataset.themePref = pref;
+    root.dataset.theme = resolve(pref);
+    if (persist) {
+      try { localStorage.setItem(PREF_KEY, pref); } catch (e) { /* 隐私模式忽略 */ }
+    }
+    buttons.forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.themePref === pref));
+    });
+    // canvas 画的曲线不会自己跟着 CSS 变量变色，得手动重画一次
+    if (typeof redrawCharts === 'function') redrawCharts();
+  }
+
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () { apply(b.dataset.themePref, true); });
+  });
+
+  // 只在 auto 模式下跟随系统。用户显式选了浅/深，就不该被系统设置覆盖。
+  mq.addEventListener('change', function () {
+    if (root.dataset.themePref === 'auto') apply('auto', false);
+  });
+
+  apply(root.dataset.themePref || 'auto', false);
+})();
+</script>
 
 </body>
 </html>

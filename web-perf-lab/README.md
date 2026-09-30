@@ -148,9 +148,8 @@
 | `/api/image?w=&h=&noise=1&delay=&nocache=1` | 动态生成 PNG |
 | `/api/items?n=N` | 长列表数据（虚拟滚动用） |
 | `/api/font?delay=N&kb=N` | 延迟返回的**占位字体**（演示 FOIT/FOUT） |
-| `/sw-lab/{bad\|good}/sw.js` | Service Worker 脚本（作用域限 `/sw-lab/<mode>/`） |
-| `/sw-lab/{bad\|good}/data.json?ms=N` | SW 场景的数据源 |
-
+| `/cache/sw/{bad\|good}/sw.js` | Service Worker 脚本。**作用域 = 脚本所在目录**，所以限在 `/cache/sw/<mode>/` 内，不污染其他场景 |
+| `/cache/sw/{bad\|good}/data.json?ms=N` | SW 场景的数据源（延迟可调） |
 ### 难度分级是怎么实现的
 
 21 个场景分四级，但**等级没有写进任何场景页** ——
@@ -158,6 +157,38 @@
 查出等级，自动往页头插一个彩色徽章。
 
 这样调整分级只改一处，不用动 42 个 HTML 文件。
+
+## 主题
+
+支持**浅色 / 深色 / 跟随系统**三态，默认跟随系统。
+
+- 所有颜色都是 CSS 变量，两套主题共用同一组变量名，组件不写死颜色
+- 实际主题解析成 `light`/`dark` 写在 `<html data-theme>` 上，
+  同时设置 `color-scheme`（滚动条、表单控件才会跟着变）
+- 偏好存 `localStorage`，刷新后保持；选「跟随系统」时会实时响应系统切换
+
+**引导脚本必须内联在 `<head>` 里、同步执行**（每个页面的样式表之后）：
+
+```html
+<script>
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) {}
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+```
+
+放到 `lab.js`（在 body 末尾）里会**先按系统主题画一帧再切**，出现明显闪烁（FOUC）。
+这是主题方案里最容易漏的一步。
+
+切换控件由 `lab.js` 注入：场景页插进 `.lab-header` 最右边，
+索引页插进 hero 里的 `#themeSlot`。
+
+> 例外：`lighthouse/audit-{bad,good}.html` **故意不加载 lab.css、也不注入主题脚本** ——
+> 它们是给 Lighthouse 打分的干净被测页面，多一个脚本或一条样式都会影响评分。
 
 ### 路由的返回值约定（踩过坑）
 

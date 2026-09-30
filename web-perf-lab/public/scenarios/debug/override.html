@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>动态 JS 替换（Local Overrides）</title>
 <link rel="stylesheet" href="/assets/lab.css">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
 </head>
 <body>
 
@@ -62,13 +76,13 @@
       <tr><th></th><th>折扣率</th><th>折后</th><th>最终价</th></tr>
       <tr>
         <td>现在（有 bug）</td>
-        <td class="mono" style="color:#ffb4ae">0.1</td>
+        <td class="mono" style="color:var(--red)">0.1</td>
         <td class="mono">180</td>
         <td class="mono">160</td>
       </tr>
       <tr>
         <td>改完后应该是</td>
-        <td class="mono" style="color:#7ee787">0.25</td>
+        <td class="mono" style="color:var(--green)">0.25</td>
         <td class="mono">150</td>
         <td class="mono">150</td>
       </tr>
@@ -109,7 +123,7 @@
       或者把文件夹整个移除。
     </p>
 
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>和「改完再抄回源码」配合使用</b><br>
       标准流程是：<br>
       1. 在 Overrides 里试，确认方案有效<br>

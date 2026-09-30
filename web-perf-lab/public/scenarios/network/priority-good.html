@@ -5,8 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>资源优先级 · 优化版</title>
 <link rel="stylesheet" href="/assets/lab.css">
-<!-- ① 让浏览器在解析 HTML 之前就知道有这张图，不用等到 &lt;img&gt; 标签 -->
-<link rel="preload" as="image" href="/api/image?w=1200&h=800&noise=1&delay=800&nocache=1">
+
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+<!-- ① 让浏览器在解析 HTML 之前就知道有这张图，不用等到 &lt;img&gt; 标签。
+     必须放在所有阻塞资源**前面** —— 越早声明越早开始下载。 -->
+<link rel="preload" as="image" href="/api/image?w=1200&h=800&noise=0&delay=200&nocache=1">
+<link rel="stylesheet" href="/assets/lab.css">
+<!-- 和问题版完全一样的两个阻塞脚本，保证对比公平 -->
+<script src="/api/block.js?ms=700"></script>
+<script src="/api/block.js?ms=700&i=2"></script>
 </head>
 <body>
 
@@ -30,10 +49,10 @@
       <li>对比问题版：同样的图、同样的服务端延迟，LCP 差了多少</li>
     </ol>
     <div class="expect">
-      预期：Priority = <b>High</b>，LCP 提前到 <b>1s 左右</b><br>
-      服务端一个字没改，只是告诉浏览器"这张图很重要"。
+      预期：Priority = <b>High</b>，<b>开始时间 ~20ms</b>（几乎和 HTML 同时）<br>
+      LCP 从 <b>1.0s 降到 0.25s</b> —— 服务端一个字没改。
     </div>
-    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
       <b>preload 不是越多越好</b><br>
       每个 preload 都是一次"插队"。全站 preload 十几张图，
       等于谁都没插队，还白白多了一堆提前发起的请求。<br>
@@ -49,10 +68,12 @@
     </p>
 
     <img id="hero"
-         src="/api/image?w=1200&h=800&noise=1&delay=800&nocache=1"
+         src="/api/image?w=1200&h=800&noise=0&delay=200&nocache=1"
          fetchpriority="high"
          style="width:100%;height:auto;border-radius:6px;margin:12px 0"
          alt="LCP 大图">
+
+    <pre id="log">等待开始…</pre>
 
     <h3>改了三处</h3>
     <pre class="logbox">&lt;!-- ① head 里提前声明，浏览器解析 HTML 时就开始下载 --&gt;
