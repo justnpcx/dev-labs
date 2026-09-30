@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>资源优先级 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>LCP 图被降级到 Low</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/priority/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Network</b>，<b>务必勾上 Disable cache</b>（否则图片命中缓存，什么都看不到）</li>
+      <li>右键表头 → 勾上 <b>Priority</b> 列</li>
+      <li>硬刷新 <code>Ctrl+Shift+R</code></li>
+      <li>找到 <code>/api/image</code> 那条，看它的 <b>Priority</b></li>
+      <li>看它的 <b>Start time</b> —— 是不是排在 CSS / JS 后面才出发</li>
+      <li>切到 <b>Performance</b> 面板录一次，看 <b>LCP</b> 标记落在哪个元素上、什么时候</li>
+    </ol>
+    <div class="expect">
+      预期：图片 Priority = <b>Low</b>，开始得很晚<br>
+      它是 LCP 元素，所以 LCP 被它拖到 <b>2s 以上</b>。
+    </div>
+    <div class="warn">
+      <b>根因：<code>loading="lazy"</code> 用错了地方</b><br>
+      懒加载是给<b>首屏之外</b>的图用的。加在首屏 LCP 图上，
+      浏览器会把它降到 Low 优先级、延后加载 —— 等于主动把自己的 LCP 推迟。<br><br>
+      这是最常见的 LCP 事故，而且代码看起来"很优化"。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <p class="hint">
+      下面这张图就是本页的 LCP 元素。它是 1200×800 的噪声图（压不动，体积大），
+      服务端还刻意延迟了 800ms 才响应。
+    </p>
+
+    <img id="hero"
+         src="/api/image?w=1200&h=800&noise=1&delay=800&nocache=1"
+         loading="lazy"
+         style="width:100%;height:auto;border-radius:6px;margin:12px 0"
+         alt="LCP 大图">
+
+    <h3>问题出在这一行</h3>
+    <pre class="logbox">&lt;!-- 首屏 LCP 图，却加了 loading="lazy" --&gt;
+&lt;img src="/api/image?..." loading="lazy"&gt;
+
+&lt;!-- 没有 preload，没有 fetchpriority --&gt;
+&lt;!-- 浏览器只能等 HTML 解析到这里，才"发现"这张图 --&gt;</pre>
+
+    <h3>浏览器怎么给资源排优先级</h3>
+    <table>
+      <tr><th>资源</th><th>默认优先级</th></tr>
+      <tr><td>阻塞渲染的 CSS</td><td class="mono">Highest</td></tr>
+      <tr><td>head 里的同步 JS</td><td class="mono">High</td></tr>
+      <tr><td>首屏普通 &lt;img&gt;</td><td class="mono">High</td></tr>
+      <tr><td><code>loading="lazy"</code> 的图</td><td class="mono">Low</td></tr>
+      <tr><td>字体</td><td class="mono">High（但发现得晚）</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      优先级决定了带宽怎么分。把 LCP 图降到 Low，
+      等于在一堆不重要的请求后面排队。
+    </p>
+
+    <div id="metrics"></div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+onLoad(() => {
+  const img = document.getElementById('hero');
+  const done = () => {
+    const nav = performance.getEntriesByType('navigation')[0];
+    labLog(`图片加载完成，距页面开始 ${(performance.now()).toFixed(0)}ms`);
+    labLog('看 Network 面板的 Priority 列确认它是 Low，以及 Start time 有多晚');
+  };
+  if (img.complete) done(); else img.addEventListener('load', done);
+});
+</script>
+</body>
+</html>

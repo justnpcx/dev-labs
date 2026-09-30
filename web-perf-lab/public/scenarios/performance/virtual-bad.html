@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长列表渲染 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  #vp {
+    height: 420px; overflow-y: auto; margin: 12px 0;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #0b0f14;
+  }
+  .vrow {
+    height: 56px; padding: 8px 12px; box-sizing: border-box;
+    border-bottom: 1px solid #1a2129; font-size: 13px;
+  }
+  .vrow b { color: var(--blue); }
+  .vrow .d { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>一万条全部塞进 DOM</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/virtual/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>点「加载 10000 条」—— 注意它<b>卡了多久</b></li>
+      <li>看页面下方报出的<b>渲染耗时</b>和<b>DOM 节点数</b></li>
+      <li>在列表里快速滚动 —— 明显掉帧、发涩</li>
+      <li><b>Performance</b> 面板录一次滚动，看 Main 轨道密集的红块</li>
+      <li>切到 <b>Memory</b> 面板 → 点垃圾桶图标做一次堆快照</li>
+      <li>看 <b>Elements</b> 面板，数一数 <code>.vrow</code> 有多少个</li>
+    </ol>
+    <div class="expect">
+      预期：渲染耗时 <b>几百毫秒</b>，DOM 节点数 <b>3 万以上</b><br>
+      滚动时帧率掉到 20~30fps。
+    </div>
+    <div class="warn">
+      <b>为什么节点数比"条数"多这么多</b><br>
+      每条记录渲染成 <code>div &gt; b + span</code> 三个节点，一万条就是三万个。
+      再加上样式计算、布局、绘制 —— 浏览器每次滚动都要在这棵大树上干活。<br><br>
+      内存上更明显：每个 DOM 节点在 Chrome 里大约占 <b>1KB 左右</b>（含样式和布局对象），
+      三万节点就是几十 MB。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="load()">加载 10000 条</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+
+    <div id="metrics"></div>
+
+    <div id="vp"><div id="list"></div></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题出在这一行</h3>
+    <pre class="logbox">const { items } = await (await fetch('/api/items?n=10000')).json();
+
+// 一万条，一条不落地塞进 DOM
+list.innerHTML = items.map((it) =&gt;
+  `&lt;div class="vrow"&gt;&lt;b&gt;#${it.id}&lt;/b&gt; ${it.name}&lt;/div&gt;`
+).join('');
+
+// 用户只能看到 7~8 条，剩下 9992 条在白白占内存、拖慢布局。</pre>
+
+    <h3>长列表的三种做法</h3>
+    <table>
+      <tr><th>做法</th><th>DOM 节点数</th><th>代价</th></tr>
+      <tr><td>全量渲染</td><td>O(n)</td><td>一万条就卡死</td></tr>
+      <tr><td><b>虚拟滚动</b></td><td>O(可视区)</td><td>要自己管滚动位置、行高</td></tr>
+      <tr><td>分页 / 无限滚动</td><td>O(已加载)</td><td>滚久了还是会积累</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      注意<b>分页并没有解决问题</b>，只是把它推迟了 ——
+      用户一直往下滚，节点还是越积越多。真正的解法是虚拟滚动。
+    </p>
+
+    <div class="warn">
+      <b>别急着上库</b><br>
+      虚拟滚动的核心逻辑其实只有二十来行（见优化版）。
+      只有在需要<b>动态行高</b>、<b>横向虚拟</b>、<b>粘性分组</b>这些复杂需求时，
+      才值得引入 react-window / vue-virtual-scroller 这类库。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+async function load() {
+  const status = document.getElementById('status');
+  const list = document.getElementById('list');
+  status.textContent = '拉数据中…';
+
+  const t0 = performance.now();
+  const { items } = await (await fetch('/api/items?n=10000')).json();
+  const tFetch = performance.now() - t0;
+
+  status.textContent = '渲染中…';
+  await new Promise((r) => requestAnimationFrame(r));   // 让状态文字先画出来
+
+  const t1 = performance.now();
+  list.innerHTML = items.map((it) =>
+    `<div class="vrow"><b>#${it.id}</b> ${it.name}<div class="d">${it.desc}</div></div>`
+  ).join('');
+  const tRender = performance.now() - t1;
+
+  const nodes = document.getElementsByTagName('*').length;
+  status.textContent = '完成';
+
+  labLog(`拉数据 ${tFetch.toFixed(0)}ms，渲染 ${tRender.toFixed(0)}ms`);
+  labLog(`当前 DOM 节点总数：${nodes}`);
+  labLog(`当前列表里的 .vrow 元素：${list.children.length} 个`);
+  labLog('现在快速滚动这个列表 —— 掉帧明显。对比优化版的同一串数字');
+
+  renderMetrics([
+    ['渲染耗时', `${tRender.toFixed(0)} ms`],
+    ['.vrow 元素数', `${list.children.length}`],
+    ['DOM 节点总数', `${nodes}`],
+  ]);
+}
+
+/** 用页面里已有的 #metrics 显示关键数字（lab.js 的 showMetrics 是导航计时，这里要自定义） */
+function renderMetrics(rows) {
+  const el = document.getElementById('metrics');
+  if (!el) return;
+  el.innerHTML = rows.map(([k, v]) =>
+    `<div class="row" style="justify-content:space-between;margin:0;padding:4px 0;border-bottom:1px dashed #222a35">
+       <span class="hint">${k}</span><span class="mono">${v}</span>
+     </div>`).join('');
+}
+</script>
+</body>
+</html>

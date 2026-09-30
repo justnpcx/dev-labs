@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>字体加载 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  /* 问题版：font-display 用默认的 block —— 字体没到之前，文字**完全不可见** */
+  @font-face {
+    font-family: 'LabFont';
+    src: url('/api/font?delay=2500') format('woff2');
+    font-display: block;
+  }
+  #foit-demo {
+    font-family: 'LabFont', system-ui, sans-serif;
+    font-size: 30px;
+    line-height: 1.5;
+    margin: 12px 0;
+    padding: 16px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    min-height: 90px;
+  }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>文字消失 2.5 秒</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/font/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新 <code>Ctrl+Shift+R</code>，<b>盯着下面那个虚线框</b></li>
+      <li>框是空的 —— 文字在字体到达前完全不渲染，这就是 <b>FOIT</b></li>
+      <li>约 2.5 秒后文字才出现</li>
+      <li>Network 面板找 <code>/api/font</code>，看它的耗时和 <b>Priority</b></li>
+      <li>看 <b>Initiator</b> 列 —— 是不是 CSS 里的 <code>@font-face</code></li>
+      <li>对比优化版：同样的延迟，文字什么时候出现</li>
+    </ol>
+    <div class="expect">
+      预期：文字 <b>2.5 秒不可见</b>，然后一次性出现<br>
+      在这 2.5 秒里用户看到的是一片空白 —— 他会以为页面坏了。
+    </div>
+    <div class="warn">
+      <b>为什么字体总是"发现得很晚"</b><br>
+      浏览器要先下载并解析 CSS，才知道有 <code>@font-face</code>，
+      然后才开始下载字体。这一串是<b>串行</b>的：<br>
+      <code>HTML → CSS → 发现字体 → 下载字体 → 文字可见</code><br><br>
+      相比之下 <code>&lt;img&gt;</code> 在 HTML 解析时就被发现了。
+      这就是字体为什么特别需要 preload。
+    </div>
+    <div class="warn" style="background:#1a2430;border-color:var(--blue)">
+      <b>关于本演练场的字体载荷</b><br>
+      服务端返回的是一个<b>占位字节流，不是真字体</b>（把几百 KB 二进制提交进仓库太脏，
+      构建期装字体又要依赖包管理器联网）。<br>
+      但这不影响演示：<b>FOIT 的时长取决于字体下载耗时</b>，
+      不取决于下载完之后能不能解析成功。你看到的不可见期是真实的。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <p class="hint">刷新页面，注意文字出现的时刻：</p>
+
+    <div id="foit-demo">The quick brown fox jumps over the lazy dog</div>
+
+    <div class="row">
+      <button onclick="location.reload()">再刷新一次</button>
+      <span class="hint" id="status">字体延迟 2500ms</span>
+    </div>
+
+    <h3>问题出在这一行</h3>
+    <pre class="logbox">@font-face {
+  font-family: 'LabFont';
+  src: url('/api/font?delay=2500') format('woff2');
+  font-display: block;      /* ← 字体没到，文字就不画 */
+}</pre>
+
+    <h3>font-display 的五个值</h3>
+    <table>
+      <tr><th>值</th><th>行为</th><th>适合</th></tr>
+      <tr><td class="mono">auto</td><td>由浏览器决定，通常等同 block</td><td>不建议</td></tr>
+      <tr><td class="mono">block</td><td><b>约 3s 不可见</b>，然后 fallback</td><td>图标字体</td></tr>
+      <tr><td class="mono">swap</td><td>立刻用 fallback，字体到了再换</td><td><b>正文</b></td></tr>
+      <tr><td class="mono">fallback</td><td>约 100ms 不可见，然后 fallback</td><td>折中</td></tr>
+      <tr><td class="mono">optional</td><td>约 100ms 内没到就<b>本次不用了</b></td><td>极致性能</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      注意 <code>swap</code> 不是没代价 —— 它换来的是 <b>CLS</b>：
+      字体到了之后文字宽度会变，整段可能重排。所以还要配合
+      <code>size-adjust</code> / <code>ascent-override</code> 对齐 fallback 的度量。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+// 记录文字真正可见的时刻（字体到达 → 触发一次 reflow）
+const t0 = performance.now();
+document.fonts.ready.then(() => {
+  labLog(`document.fonts.ready 在 ${(performance.now()).toFixed(0)}ms 触发`);
+  labLog('在这之前，虚线框里是空的 —— 这段时间就是 FOIT');
+});
+
+onLoad(() => {
+  const el = document.getElementById('foit-demo');
+  labLog('页面已渲染。如果框里没字，说明字体还在下载中');
+  // 用 rAF 探测首帧有没有内容不太可靠，直接读字体状态更准
+  setTimeout(() => {
+    const loaded = document.fonts.check("30px 'LabFont'");
+    labLog(`2500ms 后字体可用？${loaded}`);
+  }, 2600);
+});
+</script>
+</body>
+</html>

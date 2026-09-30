@@ -49,6 +49,82 @@ function labRequireLocalOrigin() {
   return false;
 }
 
+/* ─────────────────── 难度分层 ───────────────────
+ *
+ * 21 个场景按"需要多少前置知识 + 要跨几层推理"分成四级，
+ * 建议按 初级 → 中级 → 高级 → 终极 的顺序走。
+ *
+ * 为什么不把等级写进每个 HTML：那样 42 个文件都要改一遍，
+ * 而且以后调整分级要再改一遍。集中在这里，一处生效。
+ */
+const LAB_LEVELS = {
+  // 初级：看懂"浏览器怎么加载一个页面"，现象肉眼可见
+  1: [
+    'network/waterfall',    // 请求之间怎么排队
+    'network/cache',        // 缓存头怎么起作用
+    'network/compress',     // 传输体积
+    'network/image',        // 图片与布局偏移
+    'network/blocking',     // 渲染阻塞
+    'performance/animate',  // 动画走哪条渲染路径
+  ],
+  // 中级：要会用面板才能定位，但因果链是单向的
+  2: [
+    'network/ttfb',         // 拆 Timing 面板
+    'network/priority',     // 资源优先级排序
+    'network/font',         // 字体发现晚 + FOIT/FOUT
+    'performance/listener', // 事件频率 vs 渲染帧率
+    'performance/thrash',   // 强制同步布局
+    'performance/longtask', // 长任务切分
+    'debug/override',       // 不改代码改线上 JS
+    'debug/breakpoints',    // 断点全家桶
+  ],
+  // 高级：要跨"网络 / 渲染 / 线程 / 缓存"几层一起推理，且要改架构
+  3: [
+    'network/cors',         // 跨源 + 预检
+    'performance/inp',      // 输入延迟，Core Web Vital
+    'performance/worker',   // 把计算搬出主线程
+    'performance/virtual',  // 长列表：复杂度从 O(n) 降到 O(视口)
+    'cache/sw',             // 应用层缓存，策略得自己写对
+  ],
+  // 终极：没有"改一行就好"的解法，要靠工具反复逼近
+  4: [
+    'performance/leak',     // 内存泄漏：Retainers 定位引用链
+    'lighthouse/audit',     // 综合评分：前面所有点的相互作用
+  ],
+};
+
+const LAB_LEVEL_NAME = { 1: '初级', 2: '中级', 3: '高级', 4: '终极' };
+
+/** 当前页面属于哪一级（不在表里就返回 0） */
+function labLevelOf(pathname) {
+  const m = pathname.match(/^\/(network|performance|debug|lighthouse|cache)\/([a-z0-9-]+)/i);
+  if (!m) return 0;
+  const key = `${m[1].toLowerCase()}/${m[2].toLowerCase()}`;
+  for (const lv of [1, 2, 3, 4]) {
+    if (LAB_LEVELS[lv].includes(key)) return lv;
+  }
+  return 0;
+}
+
+/** 把等级徽章插进页头（紧跟在「问题版 / 优化版」徽章后面） */
+function labInjectLevelBadge() {
+  const lv = labLevelOf(location.pathname);
+  if (!lv) return;
+  const header = document.querySelector('.lab-header');
+  if (!header) return;
+
+  const badge = document.createElement('span');
+  badge.className = `badge lv${lv}`;
+  badge.textContent = LAB_LEVEL_NAME[lv];
+  badge.title = '难度分级：初级 → 中级 → 高级 → 终极';
+
+  const first = header.querySelector('.badge');
+  if (first && first.nextSibling) header.insertBefore(badge, first.nextSibling);
+  else header.insertBefore(badge, header.firstChild);
+}
+
+onLoad(labInjectLevelBadge);
+
 /** 显示当前页面的关键指标（有些场景用它证明"页面自己也知道自己慢"） */
 function showMetrics() {
   const el = document.getElementById('metrics');

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交互延迟 INP · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>分片让出主线程</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/inp/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Performance</b> 面板，点录制</li>
+      <li>连点「处理 1 条」3 次</li>
+      <li>停止录制</li>
+      <li>看 Main 轨道 —— 同样 700ms 的活，被切成 <b>7 小段</b>，段间有缝隙</li>
+      <li>看 <b>Interactions</b> 轨道，对比每条 duration</li>
+      <li>重点：<b>总耗时几乎没变</b>，但交互响应快了一个数量级</li>
+    </ol>
+    <div class="expect">
+      预期：交互 duration 从 <b>700ms+ 降到几十毫秒</b><br>
+      总计算量一样，INP 却合格了。
+    </div>
+    <div class="warn">
+      <b>这不是"优化了计算"，是"优化了排队"</b><br>
+      每一小段之间用 <code>yield</code> 把主线程还给浏览器，
+      浏览器就有机会插进去处理输入、渲染一帧。<br><br>
+      代价是总时长可能<b>略微变长</b>（多了调度开销）——
+      用一点吞吐换响应性，这个交换在 UI 上几乎总是划算的。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="run()">处理 1 条</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动就多了个 yield</h3>
+    <pre class="logbox">// 问题版：一口气跑完
+heavyWork(700);
+
+// 优化版：切成 7 片，片间让出主线程
+for (let i = 0; i &lt; 7; i++) {
+  heavyWork(100);
+  await yieldToMain();     // ← 把主线程还给浏览器
+}
+
+// 优先用 scheduler.yield()，它能让出后**优先**被调度回来，
+// 不会像 setTimeout(0) 那样被排到队尾。
+function yieldToMain() {
+  if (typeof scheduler !== 'undefined' &amp;&amp; scheduler.yield) {
+    return scheduler.yield();
+  }
+  return new Promise((r) =&gt; setTimeout(r, 0));
+}</pre>
+
+    <h3>三种让出方式怎么选</h3>
+    <table>
+      <tr><th>方式</th><th>特点</th></tr>
+      <tr><td class="mono">scheduler.yield()</td>
+          <td>让出后<b>优先</b>被调度回来，不排队尾。Chrome 129+</td></tr>
+      <tr><td class="mono">setTimeout(0)</td>
+          <td>兼容性最好，但会被排到宏任务队尾，可能被别的任务插队</td></tr>
+      <tr><td class="mono">requestIdleCallback</td>
+          <td>只在空闲时跑，<b>不保证</b>及时执行 —— 不适合有 deadline 的活</td></tr>
+    </table>
+
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>更彻底的做法：干脆别放在主线程</b><br>
+      如果这 700ms 是纯计算（不碰 DOM），扔进 <b>Web Worker</b> 才是终局方案 ——
+      主线程一点都不用让。<br>
+      见 <a href="/performance/worker/bad" style="color:var(--blue)">主线程卸载</a> 那个场景。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+/** 纯 CPU 空转 ms 毫秒 */
+function heavyWork(ms) {
+  const end = performance.now() + ms;
+  let x = 0;
+  while (performance.now() < end) x += Math.sqrt(x + 1);
+  return x;
+}
+
+/** 把主线程还给浏览器。优先用 scheduler.yield，退回到 setTimeout。 */
+function yieldToMain() {
+  if (typeof scheduler !== 'undefined' && typeof scheduler.yield === 'function') {
+    return scheduler.yield();
+  }
+  return new Promise((r) => setTimeout(r, 0));
+}
+
+async function run() {
+  const status = document.getElementById('status');
+  status.textContent = '分片计算中…';
+
+  const t0 = performance.now();
+  const CHUNKS = 7, PER = 100;
+  for (let i = 0; i < CHUNKS; i++) {
+    heavyWork(PER);
+    await yieldToMain();
+  }
+  const cost = performance.now() - t0;
+
+  labLog(`分 ${CHUNKS} 片跑完，总耗时 ${cost.toFixed(0)}ms`);
+  labLog(`用的是 ${typeof scheduler !== 'undefined' && scheduler.yield ? 'scheduler.yield()' : 'setTimeout(0) 兜底'}`);
+  labLog('主线程在每片之间都是空闲的 —— 这时候点按钮，立刻就有响应');
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

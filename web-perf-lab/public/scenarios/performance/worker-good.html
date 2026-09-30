@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>主线程卸载 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  .pulse { display:flex; align-items:center; gap:12px; margin:10px 0; }
+  .dot { width:14px; height:14px; border-radius:50%; background:#7ee787; }
+  #frames { font-family: ui-monospace, Consolas, monospace; font-size: 26px; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>重活扔给 Worker</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/worker/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>点「开始计数」</li>
+      <li>点「交给 Worker 算」</li>
+      <li>看数字：<b>一直涨</b>，一帧都不掉</li>
+      <li>按钮也照样能点，页面完全不卡</li>
+      <li><b>Performance</b> 面板录一次，找 <b>Worker</b> 轨道</li>
+      <li>看主线程轨道 —— 应该几乎是空的，只有收发消息那几毫秒</li>
+    </ol>
+    <div class="expect">
+      预期：计数不停，主线程几乎无长任务<br>
+      总计算时间<b>和问题版差不多</b>，但用户完全感觉不到。
+    </div>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>Performance 面板里的 Worker 轨道</b><br>
+      录制的顶部会出现一条单独标注 <code>Worker</code> 的轨道 ——
+      重活跑到那儿去了。<br><br>
+      这是 Worker 最直观的证据：<b>同样的 CPU 时间，换了个人来扛</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="pulse">
+      <span class="dot"></span>
+      <span id="frames">0</span>
+      <span class="hint">帧（rAF 驱动）</span>
+    </div>
+
+    <div class="row">
+      <button id="toggle" onclick="toggleCount()">开始计数</button>
+      <button onclick="runHeavy()">交给 Worker 算</button>
+      <span class="hint" id="status">先开计数，再点右边的</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动：把重活挪出主线程</h3>
+    <pre class="logbox">// 主线程只负责"发指令"和"收结果"
+const worker = new Worker(workerUrl);
+worker.onmessage = (e) =&gt; render(e.data);
+button.onclick = () =&gt; worker.postMessage({ n: 38, times: 40 });
+
+// Worker 里跑同样的代码，但它在**另一条线程**上
+self.onmessage = (e) =&gt; {
+  const { n, times } = e.data;
+  let acc = 0;
+  for (let i = 0; i &lt; times; i++) acc += fib(n);
+  self.postMessage(acc);
+};</pre>
+
+    <h3>Worker 的四个硬约束</h3>
+    <table>
+      <tr><th>约束</th><th>说明</th></tr>
+      <tr><td>没有 DOM</td><td>碰不到 <code>document</code>，结果要 postMessage 回来</td></tr>
+      <tr><td>不能共享内存<br>（默认）</td><td>数据是<b>结构化克隆</b>过去的，大对象有拷贝成本</td></tr>
+      <tr><td>启动有开销</td><td>几十毫秒。任务太短反而更慢，要衡量</td></tr>
+      <tr><td>是独立脚本</td><td>要单独一个文件（或用 Blob URL 内联，本页就是）</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      <b>拷贝成本</b>是实际项目里最容易翻车的地方：传一个 50MB 的 ArrayBuffer
+      过去，克隆本身就能卡住主线程几百毫秒 —— 优化了个寂寞。<br>
+      解法是用 <code>Transferable</code> 转移所有权（零拷贝），
+      或用 <code>SharedArrayBuffer</code> 真正共享。
+    </p>
+
+    <h3>什么时候不值得上 Worker</h3>
+    <p class="hint">
+      任务只有 20ms 的话，Worker 的启动 + 消息往返可能就要 30ms，
+      还不如老老实实分片让出（见
+      <a href="/performance/inp/good" style="color:var(--blue)">交互延迟</a>）。
+      <b>经验线：单次超过 50ms 才值得考虑搬走。</b>
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+// ── 计数（证明主线程是空闲的）──
+let rafId = null, frames = 0;
+
+function tick() {
+  frames++;
+  document.getElementById('frames').textContent = frames;
+  rafId = requestAnimationFrame(tick);
+}
+
+function toggleCount() {
+  const btn = document.getElementById('toggle');
+  if (rafId === null) {
+    frames = 0;
+    rafId = requestAnimationFrame(tick);
+    btn.textContent = '停止计数';
+    labLog('计数已开始');
+  } else {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+    btn.textContent = '开始计数';
+    labLog(`计数已停止，共 ${frames} 帧`);
+  }
+}
+
+// ── Worker：用 Blob URL 内联，避免多一个文件 ──
+//
+// 为什么内联：这个演练场讲究"一个文件读完"，而且用 Blob URL 能直接
+// 把 Worker 的代码摆在页面上给你看。真实项目一般用独立 .js 文件。
+const WORKER_SRC = `
+  function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
+  self.onmessage = (e) => {
+    const { n, times } = e.data;
+    const t0 = performance.now();
+    let acc = 0;
+    for (let i = 0; i < times; i++) acc += fib(n);
+    self.postMessage({ acc, cost: performance.now() - t0 });
+  };
+`;
+
+const worker = new Worker(URL.createObjectURL(
+  new Blob([WORKER_SRC], { type: 'application/javascript' })
+));
+
+worker.onmessage = (e) => {
+  const { acc, cost } = e.data;
+  labLog(`Worker 算完，耗时 ${cost.toFixed(0)}ms（结果 ${acc}）`);
+  labLog(`主线程这期间一直在跑 rAF，当前 ${frames} 帧 —— 一帧都没掉`);
+  document.getElementById('status').textContent = '完成';
+};
+
+function runHeavy() {
+  document.getElementById('status').textContent = 'Worker 计算中，主线程空闲…';
+  worker.postMessage({ n: 38, times: 40 });
+}
+</script>
+</body>
+</html>

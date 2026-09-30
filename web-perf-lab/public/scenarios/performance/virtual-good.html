@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长列表渲染 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  #vp {
+    height: 420px; overflow-y: auto; margin: 12px 0;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #0b0f14; position: relative;
+  }
+  #spacer { position: relative; }        /* 撑出总高度，让滚动条是对的 */
+  #pool { position: absolute; left: 0; top: 0; right: 0; }
+  .vrow {
+    height: 56px; padding: 8px 12px; box-sizing: border-box;
+    border-bottom: 1px solid #1a2129; font-size: 13px;
+  }
+  .vrow b { color: var(--blue); }
+  .vrow .d { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>只渲染看得见的那几行</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/virtual/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>点「加载 10000 条」—— 这次几乎是<b>瞬间</b>完成</li>
+      <li>看报出的 DOM 节点数：<b>几十个</b>，不是三万多</li>
+      <li>快速滚动列表 —— 顺滑，不掉帧</li>
+      <li>滚动时看 <b>Elements</b> 面板：<code>.vrow</code> 的数量<b>始终不变</b></li>
+      <li>注意行号在变 —— DOM 节点被复用了，不是每次新建</li>
+      <li>Memory 面板做一次堆快照，对比问题版的内存占用</li>
+    </ol>
+    <div class="expect">
+      预期：渲染耗时 <b>个位数毫秒</b>，DOM 节点数 <b>约 30 个</b><br>
+      一万条和一百万条，DOM 开销<b>完全一样</b>。
+    </div>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>核心思路只有一句话</b><br>
+      <b>DOM 里永远只放"当前看得见的那些行"</b>，
+      用一个撑高的占位元素骗过滚动条，滚动时换内容。<br><br>
+      复杂度从 <code>O(总条数)</code> 降到 <code>O(可视区高度 / 行高)</code>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="load()">加载 10000 条</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+
+    <div id="metrics"></div>
+
+    <div id="vp">
+      <div id="spacer"><div id="pool"></div></div>
+    </div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>核心逻辑就这些</h3>
+    <pre class="logbox">const ITEM_H = 56;                     // 固定行高，是虚拟滚动的前提
+const VIEW_H = vp.clientHeight;
+
+function render() {
+  const start = Math.floor(vp.scrollTop / ITEM_H);
+  const end   = start + Math.ceil(VIEW_H / ITEM_H);
+
+  // 撑高占位元素，让滚动条长度是对的
+  spacer.style.height = (items.length * ITEM_H) + 'px';
+
+  // 只把可视区那几行放进 DOM，并用 translateY 摆到正确位置
+  pool.style.transform = `translateY(${start * ITEM_H}px)`;
+  pool.innerHTML = items.slice(start, end + 1).map(rowHtml).join('');
+}
+
+vp.addEventListener('scroll', render, { passive: true });</pre>
+
+    <h3>为什么用 translateY 而不是 top</h3>
+    <p class="hint">
+      <code>translateY</code> 只触发<b>合成</b>，不触发布局和重绘；
+      <code>top</code> 会。滚动是每秒 60 次的高频操作，
+      这个差别在低端机上很致命（同
+      <a href="/performance/animate/bad" style="color:var(--blue)">动画属性</a> 那个场景）。
+    </p>
+
+    <h3>虚拟滚动的三个难点</h3>
+    <table>
+      <tr><th>难点</th><th>怎么办</th></tr>
+      <tr><td>行高不固定</td><td>预估 + 实测回填，或干脆要求固定行高</td></tr>
+      <tr><td>滚动太快出现白屏</td><td>上下多渲染几行做缓冲区（本页多渲染 1 屏）</td></tr>
+      <tr><td>行内有图片/异步内容</td><td>先占位再回填，避免加载完成时行高跳动</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      <b>固定行高是最省事的做法</b>。如果设计上必须动态行高，
+      复杂度会上升一个量级 —— 这时候才值得考虑用现成的库。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const ITEM_H = 56;
+let items = [];
+let vp, spacer, pool;
+
+function rowHtml(it) {
+  return `<div class="vrow"><b>#${it.id}</b> ${it.name}<div class="d">${it.desc}</div></div>`;
+}
+
+function render() {
+  if (!items.length) return;
+  const viewH = vp.clientHeight;
+  const start = Math.max(0, Math.floor(vp.scrollTop / ITEM_H) - 2);      // 上方缓冲区
+  const visible = Math.ceil(viewH / ITEM_H) + 2;
+  const end = Math.min(items.length, start + visible + 2);              // 下方缓冲区
+
+  spacer.style.height = (items.length * ITEM_H) + 'px';
+  pool.style.transform = `translateY(${start * ITEM_H}px)`;
+  pool.innerHTML = items.slice(start, end).map(rowHtml).join('');
+}
+
+async function load() {
+  const status = document.getElementById('status');
+  vp = document.getElementById('vp');
+  spacer = document.getElementById('spacer');
+  pool = document.getElementById('pool');
+
+  status.textContent = '拉数据中…';
+  const t0 = performance.now();
+  const data = await (await fetch('/api/items?n=10000')).json();
+  items = data.items;
+  const tFetch = performance.now() - t0;
+
+  const t1 = performance.now();
+  render();
+  const tRender = performance.now() - t1;
+
+  const nodes = document.getElementsByTagName('*').length;
+  status.textContent = '完成';
+
+  labLog(`拉数据 ${tFetch.toFixed(0)}ms（这部分和问题版一样，都是 1 万条 JSON）`);
+  labLog(`渲染 ${tRender.toFixed(1)}ms，当前 DOM 节点总数：${nodes}`);
+  labLog(`列表里的 .vrow 元素：${pool.children.length} 个（问题版是 10000 个）`);
+  labLog('现在快速滚动 —— 注意 Elements 面板里 .vrow 的数量始终不变');
+
+  renderMetrics([
+    ['渲染耗时', `${tRender.toFixed(1)} ms`],
+    ['.vrow 元素数', `${pool.children.length}`],
+    ['DOM 节点总数', `${nodes}`],
+  ]);
+
+  // 滚动时实时更新节点数，证明它不随滚动增长
+  let ticking = false;
+  vp.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      render();
+      ticking = false;
+    });
+  }, { passive: true });
+}
+
+function renderMetrics(rows) {
+  const el = document.getElementById('metrics');
+  if (!el) return;
+  el.innerHTML = rows.map(([k, v]) =>
+    `<div class="row" style="justify-content:space-between;margin:0;padding:4px 0;border-bottom:1px dashed #222a35">
+       <span class="hint">${k}</span><span class="mono">${v}</span>
+     </div>`).join('');
+}
+</script>
+</body>
+</html>

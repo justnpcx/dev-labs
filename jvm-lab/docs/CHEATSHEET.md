@@ -102,19 +102,211 @@ GC 日志支持**自动刷新（2 秒）**，做 GC 对比实验时开着它，�
 
 ## 2. 场景对照表
 
+共 14 个现象，按**难度四级**排列（仪表盘上也是这个顺序）。
+分级的依据是「要定位它得懂多少东西」，不是「现象有多严重」。
+
+### 初级 · 现象直白，报错信息就说明一切
+
 | 场景 | 触发命令 | 期望现象 | 关键观察点 |
 |---|---|---|---|
 | 堆打爆 | `trigger heap` | `OutOfMemoryError: Java heap space` | 堆用量爬到 ~80% 就炸；`-Xmx` 管的就是它 |
 | 慢速占堆 | `trigger heap-slow` | 不炸，堆单调上涨 | 对比 `reset` 前后 `heap.usedMb` |
-| 元空间 | `trigger metaspace` | `OutOfMemoryError: Metaspace` | 约 8.8 万个类撑满 128m；复位后回落需要 Full GC |
-| 直接内存 | `trigger direct` | `OutOfMemoryError: Direct buffer memory` | **`-Xmx` 管不到它**，只看 `MaxDirectMemorySize` |
-| GC 空转 | `trigger gc-overhead` | `GC overhead limit exceeded` | **必须先 `restart serial`**，G1 不抛这个错，见专节 |
-| 线程数 | `trigger threads` | `unable to create new native thread` | 报的是「内存」但根因是 `pids_limit` / `-Xss` |
 | 栈溢出 | `trigger stack` | `StackOverflowError` | 返回 `depthReached`，改 `-Xss` 后对比这个数 |
-| 死锁 | `trigger deadlock` | `jstack` 报 `Found one Java-level deadlock` | 死锁**无法**靠 `reset` 解除，要重启容器 |
 | CPU 100% | `trigger cpu` | CPU 打满 2 核 | `top -H` 拿 tid → 转 16 进制 → `jstack` 里按 `nid` 找 |
+| 停止空转 | `trigger cpu-stop` | 空转线程退出 | 空转线程**不会自己停**，必须 interrupt |
+
+### 中级 · 要配合 jstack / jmap / top 才能定位
+
+| 场景 | 触发命令 | 期望现象 | 关键观察点 |
+|---|---|---|---|
+| 直接内存 | `trigger direct` | `OutOfMemoryError: Direct buffer memory` | **`-Xmx` 管不到它**，只看 `MaxDirectMemorySize` |
+| 线程数 | `trigger threads` | `unable to create new native thread` | 报的是「内存」但根因是 `pids_limit` / `-Xss` |
+| 死锁 | `trigger deadlock` | `jstack` 报 `Found one Java-level deadlock` | 死锁**无法**靠 `reset` 解除，要重启容器 |
 | 渐进泄漏 | `trigger leak` | 堆缓慢上涨 | 两次 `jmap -histo` 对比 `LeakEntry` 实例数 |
-| 复位 | `trigger reset` | 清空所有泄漏桶 | 清不掉死锁线程 |
+
+### 高级 · 要理解 GC / 类加载 / 锁的实现
+
+| 场景 | 触发命令 | 期望现象 | 关键观察点 |
+|---|---|---|---|
+| 元空间 | `trigger metaspace` | `OutOfMemoryError: Metaspace` | 约 8.8 万个类撑满 128m；复位后回落需要 Full GC |
+| GC 空转 | `trigger gc-overhead` | `GC overhead limit exceeded` | **必须先 `restart serial`**，G1 不抛这个错，见专节 |
+| 锁竞争现场 | `trigger contention` | `jstack` 里 7 个线程 `BLOCKED` | 8 线程抢 1 把锁；吞吐恒等于 `1/holdMillis`，**与线程数无关** |
+| 锁方式对比 | `trigger lock-bench` | 全局锁 ≫ 分段锁 ≈ AtomicLong | 全局锁耗时 ≈ 单线程耗时 × 线程数 |
+
+### 终极 · 生产事故级，多个因素交织
+
+| 场景 | 触发命令 | 期望现象 | 关键观察点 |
+|---|---|---|---|
+| 线程池无界队列 | `trigger pool` | `Java heap space`，但根因是队列无界 | 队列里堆的是**每个请求的完整上下文**；见专节 2.6 |
+| 拒绝策略对比 | `trigger pool-reject` | 四种策略的 accepted / rejected 差异 | `discard` 丢 42 个任务却 2ms 返回；`caller` 是背压 |
+| JIT 预热 | `trigger jit` | 前几轮慢，某轮开始陡降几十倍 | 返回**每轮单独**耗时；陡降点 = C2 编译完成 |
+
+### 工具
+
+| 场景 | 触发命令 | 说明 |
+|---|---|---|
+| 看状态 | `trigger status` | JVM 全景快照 |
+| 复位 | `trigger reset` | 清空泄漏桶 + 关线程池 + 停锁竞争线程 + 停空转线程 |
+
+---
+
+## 2.6 专节：线程池配错的两种典型形态
+
+生产事故里线程池的出场频率比 OOM 高得多，而且**更阴险** ——
+OOM 至少会崩，你会立刻知道出事了；线程池配错往往不崩，
+表现出来只是"偶发超时"和"数据偶尔对不上"。
+
+### 形态一：无界队列把堆吃光
+
+```java
+// ✗ 永远不拒绝，队列能一直涨
+new ThreadPoolExecutor(2, 2, 0, MILLISECONDS, new LinkedBlockingQueue<>());
+
+// ✓ 有界 + 明确的拒绝策略
+new ThreadPoolExecutor(2, 2, 0, MILLISECONDS,
+        new ArrayBlockingQueue<>(200),
+        new ThreadPoolExecutor.CallerRunsPolicy());
+```
+
+`Executors.newFixedThreadPool(n)` 和 `newSingleThreadExecutor()` 内部就是
+**无界的 `LinkedBlockingQueue`** —— 这正是《阿里巴巴 Java 开发手册》强制
+禁用这两个工厂方法的原因。
+
+**关键认知**：队列里堆的**不只是任务对象**，而是每个待处理请求的完整上下文
+（解析好的报文、用户对象、SQL 结果集……）。所以 OOM 的规模远大于
+"任务数量 × 几十字节"这个直觉。
+
+实测：2 个消费线程、4000 个任务 × 64KB 上下文 ≈ 256MB，堆直接被打满。
+报的是 `Java heap space`，但 `jstack` 里线程全都正常 —— **根因在线程池配置，不在内存**。
+
+> ⚠ 这个场景的 **HTTP 响应体可能拿不到**：堆满时序列化响应会再次 OOM，
+> 而且启动参数带 `-XX:+HeapDumpOnOutOfMemoryError`，JVM 会先在 OOM 线程里
+> 尝试写 heapdump。证据在日志里：`docker logs jvm-lab | grep -A 5 OutOfMemoryError`。
+> 原有的「堆 OOM」按钮也是同样的行为。
+
+### 形态二：拒绝策略选错，任务被静默丢弃
+
+四种策略，行为差别巨大（实测数据，`tasks=60, queueSize=16, taskMillis=20`）：
+
+| 策略 | accepted | rejected | submitCost | 说明 |
+|---|---|---|---|---|
+| `AbortPolicy` | 18 | 42 | 2ms | 抛异常，**调用方必须 catch** |
+| `CallerRunsPolicy` | 60 | 15 | **302ms** | 提交线程自己跑 → **背压** |
+| `DiscardPolicy` | 60 | 42 | **2ms** | ⚠ **静默丢 42 个任务** |
+| `DiscardOldestPolicy` | 60 | 42 | 5ms | 丢最老的，适合"只要最新值" |
+
+**最危险的是 `DiscardPolicy`**：接口 2ms 返回成功，42 个任务根本没执行，
+而且**没有异常、没有日志**。线上表现是"偶发数据对不上"，能查一整天。
+
+`CallerRunsPolicy` 的 302ms 不是 bug，是**背压**：提交线程被拖慢，
+上游自然不会再猛发请求。这是绝大多数场景下的正确选择。
+
+### 怎么观察
+
+```bash
+# 响应体可能拿不到，所以直接看日志
+docker logs jvm-lab | grep -A 5 OutOfMemoryError
+
+# 看堆里到底是什么对象最多
+docker exec jvm-lab jmap -histo:live 1 | head -15
+
+# 对比四种策略
+for p in abort caller discard oldest; do
+  echo "--- $p ---"
+  curl -s "localhost:8081/pool/bounded?policy=$p&tasks=60&queueSize=16&taskMillis=20" \
+    | python3 -m json.tool | grep -E 'accepted|rejected|submitCost'
+done
+```
+
+---
+
+## 2.7 专节：锁竞争 —— 比死锁更常见，也更难发现
+
+死锁是「卡住不动」，一眼能看出来。**锁竞争**是「照常跑，但吞吐上不去」，
+而且**加线程越多越慢** —— 不看 `jstack` 基本发现不了。
+
+```
+死锁：   A 等 B、B 等 A   —— 有环，JVM 能自动检测并报出来
+锁竞争： 8 个人抢 1 个坑位 —— 没有环，结构上完全正常，性能上完全不能接受
+```
+
+### 现场
+
+`trigger contention` 会起 8 个线程抢同一把锁，每个持有 5 秒：
+
+```bash
+docker exec jvm-lab jstack 1 | grep -A 2 'lab-lock-contention'
+# 1 个 RUNNABLE（持有锁）
+# 7 个 BLOCKED (on object monitor) —— waiting for monitor entry
+```
+
+**吞吐量恒等于 `1 / holdMillis`，和线程数无关。** 加线程只会让等待队列更长。
+
+### 量化对比
+
+`trigger lock-bench` 跑同一份计数工作，只换同步方式（实测 4 线程 × 20 万次）：
+
+| 方式 | 耗时 | 为什么 |
+|---|---|---|
+| 全局锁 `synchronized (GLOBAL_LOCK)` | **319ms** | 临界区完全串行 |
+| 分段锁（每线程一把） | 187ms | 无争用，并行 |
+| `AtomicLong` | **23ms** | 无锁 CAS |
+
+全局锁的耗时 ≈ 单线程耗时 × 线程数。**但这是没预热的微基准**，
+别当生产结论 —— 见下面的 JIT 专节。
+
+### 优化方向
+
+1. **缩小临界区**：把远程调用、IO、日志这些挪到锁外面（收益最大）
+2. **降低锁粒度**：`ConcurrentHashMap` 的分段思想；每线程独立对象
+3. **换无锁结构**：`AtomicLong` / `LongAdder`（高争用下 `LongAdder` 更优）
+4. **读写分离**：`ReentrantReadWriteLock`，读多写少时收益明显
+
+---
+
+## 2.8 专节：JIT 预热 —— 为什么你的微基准测试是错的
+
+`trigger jit` 跑 20 轮同样的计算，返回**每轮单独**的耗时。
+实测（300000 次/轮）：
+
+```
+[2082, 604, 625, 595, 589, 609, ...]   ← 首轮 2082µs，之后稳定在 ~600µs
+加速比 3.5x
+```
+
+同一段代码，跑第一次和跑第十次能差几倍到几十倍。
+
+### 三个阶段
+
+| 阶段 | 触发条件 | 相对速度 |
+|---|---|---|
+| 解释执行 | 一上来就是 | 1x |
+| C1 编译 | 方法被调用若干次 | ~10x |
+| C2 编译 | 调用次数更多（分层编译下 JVM 动态决定） | ~100x |
+
+### 为什么必须每轮单独返回
+
+如果只返回总耗时，这个现象就被**平均掉**了 —— 而这正是微基准骗人的方式：
+
+```
+你的"优化前"代码刚好没预热  → 显得慢
+你的"优化后"代码刚好预热过  → 显得快
+结论：快了 3 倍！上线：毫无变化
+```
+
+### 怎么观察
+
+```bash
+# 日志里出现某个方法名的那一刻，就是它被编译了
+./lab.sh restart && docker logs jvm-lab | grep -i 'compilation\|%'
+
+# 关掉分层编译，曲线会完全不同（只有 C2，没有中间的 C1 阶段）
+java -XX:-TieredCompilation -jar jvm-lab.jar
+```
+
+**结论**：任何微基准不预热，测的都是解释器的速度，和线上跑了几小时的 JVM
+完全不是一回事。这就是 **JMH** 存在的理由 —— 它把预热、死代码消除、
+常量折叠这些坑都处理好了。自己手写 `System.nanoTime()` 包一圈，几乎必然测错。
 
 ---
 

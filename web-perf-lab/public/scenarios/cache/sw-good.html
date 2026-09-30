@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service Worker 缓存 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  .timeline { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+              line-height: 1.7; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>先给缓存，后台再更新</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/cache/sw/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>点「注册 SW」，等状态变成 <b>activated</b></li>
+      <li>第 1 次「发一次请求」—— <b>仍然 1.2 秒</b>（缓存是空的，必须回源）</li>
+      <li>第 2 次 —— <b>瞬间返回</b>，来源显示 <code>sw-cache</code></li>
+      <li>第 3 次 —— 仍然瞬间，但注意 <code>generatedAt</code> <b>变了</b></li>
+      <li>看 <b>Application → Cache Storage</b>，这次有内容了</li>
+      <li>点 <b>Network</b> 面板，勾 Disable cache，再看请求 —— 仍然走 SW</li>
+    </ol>
+    <div class="expect">
+      预期：第 1 次 <b>1200ms</b>，之后每次 <b>&lt;5ms</b><br>
+      而且数据不是"永远停在第一次"—— 后台一直在更新。
+    </div>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>为什么第 3 次的 generatedAt 会变</b><br>
+      第 2 次请求时：页面立刻拿到缓存（旧的），<b>同时</b>后台发了一次网络请求，
+      把新结果写回缓存。<br>
+      所以第 3 次读到的就是第 2 次后台更新的结果。<br><br>
+      <b>用户永远不等网络，数据只落后一个请求周期。</b>
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="registerSw()">注册 SW</button>
+      <button onclick="request()">发一次请求</button>
+      <button onclick="unregister()">注销 SW</button>
+    </div>
+    <div class="row">
+      <span class="hint">SW 状态：</span><span class="mono" id="swState">未注册</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>关键就这几行</h3>
+    <pre class="logbox">const network = (async () =&gt; {
+  const resp = await fetch(event.request);
+  const body = await resp.clone().text();
+  await cache.put(event.request, new Response(body, {
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  return resp;
+})();
+
+// ① 不 await 网络 —— 这是"页面不等"的关键
+event.waitUntil(network.catch(() =&gt; {}));
+
+event.respondWith((async () =&gt; {
+  const cached = await cache.match(event.request);
+  return cached || (await network);      // ② 有缓存就先给缓存
+})());</pre>
+
+    <h3>四种常用缓存策略</h3>
+    <table>
+      <tr><th>策略</th><th>行为</th><th>适合</th></tr>
+      <tr><td class="mono">cache-first</td><td>只读缓存，永不更新</td><td>带 hash 的静态资源</td></tr>
+      <tr><td class="mono">network-first</td><td>先网络，失败才用缓存</td><td>需要实时的数据</td></tr>
+      <tr><td><b>stale-while-revalidate</b></td>
+          <td>先缓存，后台更新</td><td><b>大部分业务接口</b></td></tr>
+      <tr><td class="mono">cache-only / network-only</td>
+          <td>单走一条路</td><td>调试、离线页</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      <b>选策略只需要回答一个问题：这份数据能接受多旧？</b><br>
+      能接受"上一次的结果" → stale-while-revalidate；<br>
+      一秒都不能旧（比如余额、库存）→ network-first，甚至干脆别缓存。
+    </p>
+
+    <div class="warn">
+      <b>SW 最容易翻车的地方：更新</b><br>
+      用户装了一个 <code>cache-first</code> 的 SW，
+      你发了新版本，但缓存里的旧资源一直命中 —— <b>用户永远看不到新版</b>。<br><br>
+      标准解法：<b>缓存名带版本号</b>（本页是 <code>sw-lab-good-v1</code>），
+      在 <code>activate</code> 里删掉所有旧版本的缓存：
+    </div>
+    <pre class="logbox">self.addEventListener('activate', (event) =&gt; {
+  event.waitUntil((async () =&gt; {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys.filter((k) =&gt; k !== CACHE).map((k) =&gt; caches.delete(k))
+    );
+  })());
+});</pre>
+    <p class="hint">
+      改了策略或缓存内容，记得把 <code>CACHE</code> 里的版本号 +1。
+      <b>忘了加版本号，是 SW 事故的头号原因。</b>
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const SW_URL = '/sw-lab/good/sw.js';
+const DATA_URL = '/sw-lab/good/data.json?ms=1200';   // 必须固定 URL，否则每次都是缓存未命中
+let seq = 0;
+
+function setState(text) {
+  document.getElementById('swState').textContent = text;
+}
+
+async function registerSw() {
+  if (!('serviceWorker' in navigator)) {
+    labLog('这个浏览器不支持 Service Worker（需要 HTTPS 或 localhost）');
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register(SW_URL);
+    setState(reg.active ? 'activated' : 'installing…');
+    labLog(`SW 已注册，作用域：${reg.scope}`);
+    navigator.serviceWorker.ready.then(() => {
+      setState('activated');
+      labLog('SW 已激活。现在发请求：第 1 次会慢（缓存空），之后都是瞬间');
+    });
+  } catch (e) {
+    labLog(`注册失败：${e.message}`);
+  }
+}
+
+async function request() {
+  seq++;
+  const t0 = performance.now();
+  const resp = await fetch(DATA_URL);
+  const data = await resp.json();
+  const cost = performance.now() - t0;
+
+  const from = resp.headers.get('X-Lab-From') || '(源站)';
+  const tag = cost > 1000 ? '回源' : '命中缓存';
+  labLog(`第 ${seq} 次：${cost.toFixed(0)}ms（${tag}），来源 ${from}，数据生成于 ${data.generatedAt}`);
+  if (cost < 100) {
+    labLog('  → 没有等网络。后台那次 revalidate 已经在悄悄更新缓存了');
+  }
+}
+
+async function unregister() {
+  const regs = await navigator.serviceWorker.getRegistrations();
+  for (const r of regs) await r.unregister();
+  const names = await caches.keys();
+  for (const n of names) await caches.delete(n);
+  setState('未注册');
+  labLog(`已注销 ${regs.length} 个 SW，清掉 ${names.length} 个 Cache Storage`);
+  labLog('演练完请务必点这个 —— SW 不清掉会影响后续观察');
+}
+</script>
+</body>
+</html>

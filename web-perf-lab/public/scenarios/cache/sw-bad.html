@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service Worker 缓存 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  .timeline { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+              line-height: 1.7; white-space: pre-wrap; }
+  .hit  { color: #7ee787; }
+  .miss { color: #ffb4ae; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>SW 挂上了，但什么都没省</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/cache/sw/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>点「注册 SW」—— 状态变成 <b>activated</b></li>
+      <li><b>Application</b> 面板 → 左侧 <b>Service Workers</b>，能看到本页的 SW</li>
+      <li>点「发一次请求」3 次，每次都等 1.2 秒</li>
+      <li>看左侧 <b>Cache Storage</b> —— <b>空的</b>，什么都没存</li>
+      <li>Network 面板确认每次请求都是真打到服务器</li>
+      <li>结论：SW 在这条路上只是个<b>透明旁路</b></li>
+    </ol>
+    <div class="expect">
+      预期：每次请求都是 <b>≈1200ms</b><br>
+      装了 SW，但用户感受和没装一模一样。
+    </div>
+    <div class="warn">
+      <b>这是最典型的"为了用而用"</b><br>
+      项目里"我们上 PWA 了"，其实 SW 只写了 install / activate，
+      <code>fetch</code> 直接透传。<br><br>
+      SW 本身<b>不带来任何性能收益</b> —— 收益全部来自
+      <code>fetch</code> 事件里你写的缓存策略。
+      <b>没写策略 = 没装</b>。
+    </div>
+    <div class="warn" style="background:#1a2430;border-color:var(--blue)">
+      <b>⚠ SW 会一直赖在浏览器里</b><br>
+      它不像普通 JS 刷新就没了。作用域内所有页面后续的请求都会经过它，
+      <b>刷新、甚至重启浏览器都还在</b>。<br>
+      演练完请点「注销 SW」，或在 Application 面板点 <b>Unregister</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="registerSw()">注册 SW</button>
+      <button onclick="request()">发一次请求</button>
+      <button onclick="unregister()">注销 SW</button>
+    </div>
+    <div class="row">
+      <span class="hint">SW 状态：</span><span class="mono" id="swState">未注册</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题出在 fetch 处理</h3>
+    <pre class="logbox">self.addEventListener('fetch', (event) =&gt; {
+  const url = new URL(event.request.url);
+  if (!url.pathname.endsWith('/data.json')) return;
+
+  // ← 就这一行：老老实实打网络
+  event.respondWith(fetch(event.request));
+});
+
+// 没有 caches.open()，没有 cache.put()，没有 cache.match()
+// 所以 Cache Storage 里是空的，每次都是完整的网络延迟</pre>
+
+    <h3>Service Worker 的四层缓存</h3>
+    <table>
+      <tr><th>层</th><th>谁控制</th><th>特点</th></tr>
+      <tr><td>HTTP 缓存</td><td><code>Cache-Control</code> 等响应头</td><td>浏览器自己管，你只能建议</td></tr>
+      <tr><td><b>Cache Storage</b></td><td>你的 SW 代码</td><td><b>完全可控</b>，能精确到每个请求</td></tr>
+      <tr><td>IndexedDB</td><td>你的业务代码</td><td>结构化数据，适合"接口响应缓存"</td></tr>
+      <tr><td>内存</td><td>页面 JS</td><td>最快，刷新即失</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      HTTP 缓存的问题是你<b>只能"建议"</b>浏览器缓存什么 ——
+      能不能缓存、什么时候失效，最终由浏览器决定。<br>
+      <b>Cache Storage 是你说了算</b>，代价是策略得自己写对。
+    </p>
+
+    <div class="warn">
+      <b>上 SW 之前先问三个问题</b>
+      <ol style="margin:6px 0 0;padding-left:18px">
+        <li>这个资源真的会被<b>重复请求</b>吗？只请求一次的资源缓存没意义</li>
+        <li>它能接受<b>多旧</b>？秒级（库存）和天级（图标）策略完全不同</li>
+        <li>更新了怎么让用户拿到新的？<b>这是 SW 最容易翻车的地方</b></li>
+      </ol>
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const SW_URL = '/sw-lab/bad/sw.js';
+const DATA_URL = '/sw-lab/bad/data.json?ms=1200';   // 固定 URL，缓存才能命中
+let seq = 0;
+
+function setState(text) {
+  document.getElementById('swState').textContent = text;
+}
+
+async function registerSw() {
+  if (!('serviceWorker' in navigator)) {
+    labLog('这个浏览器不支持 Service Worker（需要 HTTPS 或 localhost）');
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register(SW_URL);
+    setState(reg.active ? 'activated' : 'installing…');
+    labLog(`SW 已注册，作用域：${reg.scope}`);
+    labLog('注意作用域是 /sw-lab/bad/ —— 只拦这个前缀，不影响其他 20 个场景');
+    navigator.serviceWorker.ready.then(() => {
+      setState('activated');
+      labLog('SW 已激活。去 Application 面板 → Cache Storage 看看：是空的');
+    });
+  } catch (e) {
+    labLog(`注册失败：${e.message}`);
+  }
+}
+
+async function request() {
+  seq++;
+  const t0 = performance.now();
+  const resp = await fetch(DATA_URL);
+  const data = await resp.json();
+  const cost = performance.now() - t0;
+
+  const from = resp.headers.get('X-Lab-From') || '(源站)';
+  labLog(`第 ${seq} 次：${cost.toFixed(0)}ms，来源 ${from}，数据生成于 ${data.generatedAt}`);
+  if (cost > 1000) {
+    labLog('  → 又是完整的 1.2 秒。SW 没有做任何缓存');
+  }
+}
+
+async function unregister() {
+  const regs = await navigator.serviceWorker.getRegistrations();
+  for (const r of regs) await r.unregister();
+  const names = await caches.keys();
+  for (const n of names) await caches.delete(n);
+  setState('未注册');
+  labLog(`已注销 ${regs.length} 个 SW，清掉 ${names.length} 个 Cache Storage`);
+}
+</script>
+</body>
+</html>

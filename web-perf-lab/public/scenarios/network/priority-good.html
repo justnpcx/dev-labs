@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>资源优先级 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<!-- ① 让浏览器在解析 HTML 之前就知道有这张图，不用等到 &lt;img&gt; 标签 -->
+<link rel="preload" as="image" href="/api/image?w=1200&h=800&noise=1&delay=800&nocache=1">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>提前发现 + 提权</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/priority/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> + <b>Disable cache</b>，勾上 <b>Priority</b> 列</li>
+      <li>硬刷新，找到 <code>/api/image</code></li>
+      <li>Priority 应该是 <b>High</b>，Start time 明显提前</li>
+      <li>看 <b>Initiator</b> 列 —— 这次是 <code>preload</code>，不是 HTML 解析</li>
+      <li>对比问题版：同样的图、同样的服务端延迟，LCP 差了多少</li>
+    </ol>
+    <div class="expect">
+      预期：Priority = <b>High</b>，LCP 提前到 <b>1s 左右</b><br>
+      服务端一个字没改，只是告诉浏览器"这张图很重要"。
+    </div>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>preload 不是越多越好</b><br>
+      每个 preload 都是一次"插队"。全站 preload 十几张图，
+      等于谁都没插队，还白白多了一堆提前发起的请求。<br>
+      只 preload <b>LCP 那一张</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <p class="hint">
+      同一张图、同样的服务端延迟，唯一区别是 head 里多了一行 preload，
+      img 上多了 <code>fetchpriority="high"</code>，去掉了 <code>loading="lazy"</code>。
+    </p>
+
+    <img id="hero"
+         src="/api/image?w=1200&h=800&noise=1&delay=800&nocache=1"
+         fetchpriority="high"
+         style="width:100%;height:auto;border-radius:6px;margin:12px 0"
+         alt="LCP 大图">
+
+    <h3>改了三处</h3>
+    <pre class="logbox">&lt;!-- ① head 里提前声明，浏览器解析 HTML 时就开始下载 --&gt;
+&lt;link rel="preload" as="image" href="/api/image?..."&gt;
+
+&lt;!-- ② 去掉 lazy，让浏览器按默认的 High 处理 --&gt;
+&lt;!-- ③ 再显式提权，防止被同页其他资源挤下去 --&gt;
+&lt;img src="/api/image?..." fetchpriority="high"&gt;</pre>
+
+    <h3>三个提示手段的区别</h3>
+    <table>
+      <tr><th>手段</th><th>解决什么</th></tr>
+      <tr><td class="mono">preload</td><td><b>发现晚</b> —— 资源藏在 CSS/JS 里，HTML 解析器看不见</td></tr>
+      <tr><td class="mono">fetchpriority</td><td><b>排序错</b> —— 发现得不晚，但被排在了不重要的请求后面</td></tr>
+      <tr><td class="mono">preconnect</td><td><b>连接贵</b> —— 第三方域要 DNS + TCP + TLS，提前握手</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      这张图是<b>同源</b>的，所以 preconnect 帮不上忙。
+      真实项目里 LCP 图常挂在 CDN 或对象存储上 —— 那时候 preconnect 才是大头。
+    </p>
+
+    <h3>字体是同一个道理</h3>
+    <p class="hint">
+      <code>@font-face</code> 里的字体浏览器<b>发现得更晚</b>（要先下载完 CSS 才知道有它）。
+      所以字体通常要 <code>&lt;link rel="preload" as="font" crossorigin&gt;</code>。<br>
+      注意 <code>crossorigin</code> 是必须的 —— 字体请求永远是 CORS 模式，漏了会重复下载一次。
+      见 <a href="/network/font/bad" style="color:var(--blue)">字体加载</a> 场景。
+    </p>
+
+    <div id="metrics"></div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+onLoad(() => {
+  const img = document.getElementById('hero');
+  const done = () => {
+    labLog(`图片加载完成，距页面开始 ${(performance.now()).toFixed(0)}ms`);
+    labLog('对比问题版的同一行数字，差值就是"提前发现 + 提权"省下来的');
+  };
+  if (img.complete) done(); else img.addEventListener('load', done);
+});
+</script>
+</body>
+</html>

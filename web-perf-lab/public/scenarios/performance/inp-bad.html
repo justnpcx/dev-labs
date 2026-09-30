@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交互延迟 INP · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>点一下卡 700ms</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/inp/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>打开 <b>Performance</b> 面板，点左上角录制</li>
+      <li>连点「处理 1 条」3 次</li>
+      <li>停止录制</li>
+      <li>看 <b>Interactions</b> 轨道 —— 每点一次出现一条</li>
+      <li>把鼠标放到每条上，看它的 <b>duration</b></li>
+      <li>看 Main 轨道：那 700ms 是一整块红色长任务，中间没有空隙</li>
+    </ol>
+    <div class="expect">
+      预期：每条交互的 duration <b>≈ 700ms 以上</b><br>
+      Interactions 轨道里那条就是 INP 的候选值。
+    </div>
+    <div class="warn">
+      <b>为什么是 700ms 而不是 100ms</b><br>
+      你点按钮的那一刻，主线程正在跑一个 700ms 的同步循环。
+      浏览器<b>没法中断</b>它 —— 你的点击事件只能排在队列里等着。<br><br>
+      所以 INP 高<b>不代表</b>你的点击处理函数写得慢，
+      而是<b>主线程太忙，没空处理输入</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <div class="row">
+      <button onclick="run()">处理 1 条</button>
+      <span class="hint" id="status">点一下开始</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题出在这一行</h3>
+    <pre class="logbox">button.onclick = () => {
+  heavyWork(700);          // ← 同步跑满 700ms，主线程被独占
+  render(result);
+};
+
+function heavyWork(ms) {
+  const end = performance.now() + ms;
+  let x = 0;
+  while (performance.now() &lt; end) x += Math.sqrt(x + 1);
+  return x;
+}</pre>
+
+    <h3>INP 到底量的是什么</h3>
+    <table>
+      <tr><th>阶段</th><th>说明</th></tr>
+      <tr><td>输入延迟</td><td>用户按下 → 事件回调开始执行</td></tr>
+      <tr><td>处理时长</td><td>事件回调本身跑了多久</td></tr>
+      <tr><td>呈现延迟</td><td>回调结束 → 下一帧画出来</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      INP 取这三段之和，并且是<b>整次访问里最差的那一次</b>（高分位）。
+      只优化平均值没用 —— 一次 800ms 的卡顿就能把 INP 拉到不合格。
+    </p>
+
+    <div class="warn">
+      <b>生产里最常见的三个来源</b>
+      <ul style="margin:6px 0 0;padding-left:18px">
+        <li>点击后同步做重计算 / 大数组排序 / 深拷贝</li>
+        <li>输入框没做防抖，每次按键都触发全量重渲染</li>
+        <li>第三方脚本（埋点、A/B、客服）占了主线程</li>
+      </ul>
+      它们的共同点是：<b>都发生在主线程上，而主线程只有一个</b>。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+/** 纯 CPU 空转 ms 毫秒，模拟"点击后要同步算完的重活" */
+function heavyWork(ms) {
+  const end = performance.now() + ms;
+  let x = 0;
+  while (performance.now() < end) x += Math.sqrt(x + 1);
+  return x;
+}
+
+function run() {
+  const status = document.getElementById('status');
+  status.textContent = '主线程被占…';
+
+  const t0 = performance.now();
+  const v = heavyWork(700);
+  const cost = performance.now() - t0;
+
+  labLog(`同步计算完成，耗时 ${cost.toFixed(0)}ms（结果 ${v.toFixed(2)}）`);
+  labLog('这期间主线程完全无法处理输入 —— 再点几次按钮，会发现点击"排队"了');
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

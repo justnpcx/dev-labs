@@ -452,8 +452,15 @@ do_trigger() {
     gc-overhead) url="$LAB_URL/oom/gc-overhead?livePercent=80&churnMillis=20000" ;;
     stack)       url="$LAB_URL/stack/overflow" ;;
     deadlock)    url="$LAB_URL/lock/deadlock" ;;
+    contention)  url="$LAB_URL/lock/contention?threads=8&holdMillis=5000" ;;
+    lock-bench)  url="$LAB_URL/lock/benchmark?threads=8&iterations=500000" ;;
+    lock-stop)   url="$LAB_URL/lock/stop" ;;
     cpu)         url="$LAB_URL/cpu/spin?threads=2" ;;
     cpu-stop)    url="$LAB_URL/cpu/stop" ;;
+    pool)        url="$LAB_URL/pool/unbounded?tasks=4000&payloadKb=64" ;;
+    pool-reject) url="$LAB_URL/pool/bounded?policy=caller&tasks=60" ;;
+    pool-stop)   url="$LAB_URL/pool/stop" ;;
+    jit)         url="$LAB_URL/jit/warmup?rounds=20&iters=300000" ;;
     leak)        url="$LAB_URL/leak/static?mb=2&count=5" ;;
     status)      url="$LAB_URL/status" ;;
     reset)       curl -s -X POST "$LAB_URL/reset" | pretty_json; echo; return 0 ;;
@@ -476,15 +483,35 @@ do_trigger() {
   并发 / CPU 类
     stack        无限递归        → StackOverflowError
     deadlock     交叉加锁        → jstack 报 Found one Java-level deadlock
+    contention   锁竞争现场      → jstack 看 BLOCKED + waiting to lock
+                 8 线程抢 1 把锁，各持有 5 秒；吞吐恒等于 1/5 秒，与线程数无关
+    lock-bench   锁方式对比      → 全局锁 / 分段锁 / AtomicLong 耗时对比
+    lock-stop    停掉竞争线程
     cpu          打满 CPU        → 配合 top -H + jstack 定位
     cpu-stop     停掉空转线程
+
+  线程池类（生产事故频率最高）
+    pool         无界队列堆积    → Java heap space，但根因是队列无界
+                 4000 个任务 × 64KB 请求上下文 ≈ 256MB 堆被队列吃光
+                 ★ 这就是《阿里规约》禁用 Executors.newFixedThreadPool 的原因
+                 ⚠ 响应体可能拿不到（堆满时序列化会再 OOM）——
+                   看日志：docker logs jvm-lab | grep -A 5 OutOfMemoryError
+    pool-reject  拒绝策略对比    → abort / caller / discard / oldest
+                 改 policy= 参数跑一遍，对比 rejected 与 submitCostMillis
+                 caller 是背压（提交线程自己跑），discard 是静默丢任务（最危险）
+    pool-stop    关掉演练线程池
+
+  编译器类
+    jit          JIT 预热        → 同一段代码前几轮慢、之后陡降几十倍
+                 返回每轮单独耗时，看哪一轮开始掉 → 那就是 C2 编译完成的点
+                 加 -XX:+PrintCompilation 可在日志里对到具体时刻
 
   泄漏类
     leak         渐进式缓存泄漏  → 配合两次 jmap -histo 对比
 
   工具
     status       看 JVM 全景
-    reset        清空所有泄漏 + 复位
+    reset        清空所有泄漏 + 复位（同时关线程池、停锁竞争线程）
 EOF
       return 0
       ;;

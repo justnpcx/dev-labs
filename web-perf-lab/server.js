@@ -357,6 +357,149 @@ function serveLighthouseAsset(req, res, urlPath) {
   return true;
 }
 
+// ───────── 演练用资源：虚拟列表数据 / 字体 / Service Worker ─────────
+
+/**
+ * 生成 N 条记录，给"长列表渲染"场景用。
+ *
+ * 为什么放服务端生成：一万条记录写进 HTML 会让页面文件巨大且没法调参。
+ * 服务端生成可以现场改 n，对比 1 千 / 1 万 / 5 万条时 DOM 节点数和内存的差别。
+ */
+function makeItems(n) {
+  const items = new Array(n);
+  for (let i = 0; i < n; i++) {
+    items[i] = {
+      id: i,
+      name: `记录 ${i}`,
+      desc: `第 ${i} 条，用于演示长列表对主线程、内存和滚动帧率的影响`,
+      tags: ['lab', 'list', i % 5 === 0 ? 'hot' : 'cold'],
+    };
+  }
+  return items;
+}
+
+/**
+ * 一个**故意不是合法字体**的占位载荷。
+ *
+ * 为什么不放真字体：把几百 KB 的二进制提交进仓库很脏（和图片同理），
+ * 而构建期去装字体又引入了对包管理器的网络依赖。
+ *
+ * 但演示依然成立 —— `font-display: block` 造成的 FOIT（文字不可见）
+ * 取决于**字体下载耗时**，不取决于下载完之后能不能解析成功。
+ * 所以"延迟返回"就足以把 block 和 swap 的差别演示清楚。
+ */
+function makePlaceholderFont(bytes) {
+  const buf = Buffer.alloc(bytes);
+  buf.write('wOFF', 0, 'ascii');          // 看起来像个 woff，但内容不是
+  for (let i = 4; i < bytes; i++) buf[i] = (i * 31) & 0xff;
+  return buf;
+}
+
+/**
+ * /sw-lab/<mode>/{sw.js,data.json} —— Service Worker 场景专用。
+ *
+ * 为什么单独开 /sw-lab/ 前缀：**Service Worker 的作用域由脚本所在路径决定**。
+ * 放在 /sw-lab/<mode>/ 下就只拦截这个前缀，不会污染其他 18 个场景。
+ * 如果脚本放在根目录，一个写坏的 SW 能把整个演练场缓存住 ——
+ * 那是真的很难排查的故障（清缓存都不一定好使，得去 Application 面板注销）。
+ *
+ * bad / good 用两个不同子路径，是为了让它们各自拥有独立作用域：
+ * 同一个作用域只能有一个 SW，两个页面抢一个作用域会互相覆盖。
+ */
+function serveSwLab(req, res, urlPath) {
+  const m = urlPath.match(/^\/sw-lab\/(bad|good)\/(sw\.js|data\.json)$/);
+  if (!m) return false;
+
+  const [, mode, file] = m;
+  const params = new URL(req.url, 'http://x').searchParams;
+
+  if (file === 'sw.js') {
+    send(res, 200, swSource(mode), {
+      'Content-Type': MIME['.js'],
+      // SW 脚本本身绝不缓存，否则改了代码刷新不生效 —— 这是 SW 最常见的坑
+      'Cache-Control': 'no-store',
+    });
+    return true;
+  }
+
+  // data.json：延迟可调，用来放大"等网络"和"用缓存"的差别
+  const ms = Math.min(Number(params.get('ms') || 800), 5000);
+  const version = params.get('v') || '1';
+  setTimeout(() => {
+    sendJson(res, {
+      version,
+      generatedAt: new Date().toISOString(),
+      payload: makeItems(20),
+      note: `这条数据是 ${ms}ms 之后才生成的`,
+    }, { 'Cache-Control': 'no-store' });
+  }, ms);
+  return true;
+}
+
+/** 两个 SW 实现，差别只在 fetch 处理那几行 —— 这正是场景要对比的东西 */
+function swSource(mode) {
+  if (mode === 'bad') {
+    return `/* 问题版：SW 挂上了，但 fetch 直接透传 —— 每次都要等完整网络延迟。
+   SW 在这里只是个"透明的旁路"，用户感受到的和没有 SW 一模一样。 */
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (!url.pathname.endsWith('/data.json')) return;   // 只管数据，别的放行
+  event.respondWith(fetch(event.request));
+});
+`;
+  }
+  return `/* 优化版：stale-while-revalidate —— 先给缓存，后台再更新。
+   这是应用层缓存里性价比最高的策略：用户永远不等网络，
+   数据新鲜度只落后一个请求周期。 */
+const CACHE = 'sw-lab-good-v1';
+
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (!url.pathname.endsWith('/data.json')) return;
+
+  // 网络请求和"给页面响应"是**两条并行的路**，这是这个策略的关键。
+  const network = (async () => {
+    const cache = await caches.open(CACHE);
+    const resp = await fetch(event.request);
+    const body = await resp.clone().text();
+    // 重新构造一个干净的 Response 再存。
+    // 直接 put 原始响应会把源站的 Cache-Control: no-store 一起带进缓存，
+    // 有些实现会因此拒绝存储 —— 这个坑很隐蔽。
+    await cache.put(event.request, new Response(body, {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    return resp;
+  })();
+
+  // 不 await 它，但要 waitUntil 让 SW 活到写完缓存
+  event.waitUntil(network.catch(() => {}));
+
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const cached = await cache.match(event.request);
+
+    if (cached) {
+      // 命中缓存 → 立刻返回，**完全不等网络**。
+      // 加个标记头，方便在页面和 DevTools 里确认走的是哪条路。
+      const body = await cached.text();
+      return new Response(body, {
+        headers: { 'Content-Type': 'application/json', 'X-Lab-From': 'sw-cache' },
+      });
+    }
+    return (await network) || new Response('{}', {
+      headers: { 'Content-Type': 'application/json', 'X-Lab-From': 'fallback' },
+    });
+  })());
+});
+`;
+}
+
 // ─────────────────────────── API ───────────────────────────
 
 async function handleApi(req, res, url) {
@@ -433,19 +576,43 @@ async function handleApi(req, res, url) {
   }
 
   // 动态生成图片。
-  //   ?noise=1  → 随机噪声，几乎压不动，体积巨大（演示"未优化图片"）
-  //   不带 noise → 平滑渐变，同样尺寸但只有几十 KB
+  //   ?noise=1    → 随机噪声，几乎压不动，体积巨大（演示"未优化图片"）
+  //   不带 noise  → 平滑渐变，同样尺寸但只有几十 KB
+  //   ?nocache=1  → 不缓存。优先级场景靠它保证每次刷新都真的重新下载，
+  //                 否则第二次刷新命中缓存，Priority 和耗时都看不出来了
   if (p === '/api/image') {
     const w = Math.min(Number(url.searchParams.get('w') || 800), 2000);
     const h = Math.min(Number(url.searchParams.get('h') || 600), 2000);
     const noise = url.searchParams.get('noise') === '1' ? 1 : 0;
     const delay = Math.min(Number(url.searchParams.get('delay') || 0), 5000);
+    const nocache = url.searchParams.get('nocache') === '1';
     if (delay) await sleep(delay);
     const png = makePng(w, h, noise);
     return send(res, 200, png, {
       'Content-Type': 'image/png',
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': nocache ? 'no-store' : 'public, max-age=3600',
       'X-Lab-Bytes': String(png.length),
+    });
+  }
+
+  // 长列表数据源。n 默认 5000，上限 50000 —— 再大浏览器自己就先卡住了，
+  // 反而看不出"优化前后"的差别。
+  if (p === '/api/items') {
+    const n = Math.min(Number(url.searchParams.get('n') || 5000), 50000);
+    return sendJson(res, { count: n, items: makeItems(n) },
+                    { 'Cache-Control': 'no-store' });
+  }
+
+  // 延迟返回的占位字体。delay 决定 FOIT 有多长（见 makePlaceholderFont 的注释）。
+  if (p === '/api/font') {
+    const delay = Math.min(Number(url.searchParams.get('delay') || 2500), 8000);
+    const kb = Math.min(Number(url.searchParams.get('kb') || 24), 500);
+    await sleep(delay);
+    return send(res, 200, makePlaceholderFont(kb * 1024), {
+      'Content-Type': 'font/woff2',
+      // 不缓存，否则第二次刷新字体是瞬时的，FOIT 就看不到了
+      'Cache-Control': 'no-store',
+      'X-Lab-Note': 'placeholder-font-payload',
     });
   }
 
@@ -454,13 +621,17 @@ async function handleApi(req, res, url) {
 
 // ─────────────────────── 场景页面路由 ───────────────────────
 
-const SCENARIO_DIR = { network: 'network', performance: 'performance', debug: 'debug', lighthouse: 'lighthouse' };
+const SCENARIO_DIR = {
+  network: 'network', performance: 'performance', debug: 'debug',
+  lighthouse: 'lighthouse', cache: 'cache',
+};
 
 function serveScenario(res, urlPath) {
   // /network/waterfall/bad   →  scenarios/network/waterfall-bad.html
   // /debug/override          →  scenarios/debug/override.html
   // /lighthouse/audit/bad    →  scenarios/lighthouse/audit-bad.html
-  const m = urlPath.match(/^\/(network|performance|debug|lighthouse)\/([a-z0-9-]+)(?:\/(bad|good))?\/?$/i);
+  // /cache/sw/bad            →  scenarios/cache/sw-bad.html
+  const m = urlPath.match(/^\/(network|performance|debug|lighthouse|cache)\/([a-z0-9-]+)(?:\/(bad|good))?\/?$/i);
   if (!m) return false;
 
   const [, group, name, variant] = m;
@@ -486,6 +657,7 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/api/')) return await handleApi(req, res, url);
     if (serveAssetVariant(req, res, p)) return;
     if (serveLighthouseAsset(req, res, p)) return;
+    if (serveSwLab(req, res, p)) return;
     if (serveScenario(res, p)) return;
 
     // 其余走 public/ 静态目录

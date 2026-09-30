@@ -171,32 +171,43 @@ do_ui() {
 }
 
 do_routes() {
-  echo "所有场景（问题版 / 优化版成对，可开两个标签页并排对比）："
+  echo "21 个场景（问题版 / 优化版成对，可开两个标签页并排对比）。"
+  echo "按难度分四级，建议从初级顺着往上走。"
   echo
-  echo "── Network 面板 ──────────────────────────────────────────"
+  echo "── 初级 · 看懂浏览器怎么加载一个页面 ─────────────────────"
   echo "  串行 vs 并行请求     $LAB_URL/network/waterfall/bad      vs  /good"
   echo "  缓存策略             $LAB_URL/network/cache/bad          vs  /good"
-  echo "  压缩                 $LAB_URL/network/compress/bad       vs  /good"
-  echo "  渲染阻塞 JS          $LAB_URL/network/blocking/bad       vs  /good"
+  echo "  响应压缩             $LAB_URL/network/compress/bad       vs  /good"
   echo "  图片与 CLS           $LAB_URL/network/image/bad          vs  /good"
-  echo "  CORS 预检            $LAB_URL/network/cors/bad           vs  /good"
-  echo "  慢 TTFB 与重定向     $LAB_URL/network/ttfb/bad           vs  /good"
-  echo
-  echo "── Performance 面板 ─────────────────────────────────────"
-  echo "  长任务               $LAB_URL/performance/longtask/bad   vs  /good"
-  echo "  布局抖动             $LAB_URL/performance/thrash/bad     vs  /good"
-  echo "  未节流事件监听       $LAB_URL/performance/listener/bad   vs  /good"
-  echo "  内存泄漏             $LAB_URL/performance/leak/bad       vs  /good"
+  echo "  渲染阻塞 JS          $LAB_URL/network/blocking/bad       vs  /good"
   echo "  动画属性             $LAB_URL/performance/animate/bad    vs  /good"
   echo
-  echo "── JS 调试 ──────────────────────────────────────────────"
+  echo "── 中级 · 学会用面板定位问题 ─────────────────────────────"
+  echo "  慢 TTFB 与重定向     $LAB_URL/network/ttfb/bad           vs  /good"
+  echo "  资源优先级           $LAB_URL/network/priority/bad       vs  /good"
+  echo "  字体加载             $LAB_URL/network/font/bad           vs  /good"
+  echo "  未节流事件监听       $LAB_URL/performance/listener/bad   vs  /good"
+  echo "  布局抖动             $LAB_URL/performance/thrash/bad     vs  /good"
+  echo "  长任务               $LAB_URL/performance/longtask/bad   vs  /good"
   echo "  动态 JS 替换         $LAB_URL/debug/override"
   echo "  断点全家桶           $LAB_URL/debug/breakpoints"
   echo
-  echo "── Lighthouse 综合评分 ──────────────────────────────────"
+  echo "── 高级 · 跨层推理，要改架构 ─────────────────────────────"
+  echo "  CORS 预检            $LAB_URL/network/cors/bad           vs  /good"
+  echo "  交互延迟 INP         $LAB_URL/performance/inp/bad        vs  /good"
+  echo "  主线程卸载 Worker    $LAB_URL/performance/worker/bad     vs  /good"
+  echo "  长列表虚拟滚动       $LAB_URL/performance/virtual/bad    vs  /good"
+  echo "  Service Worker 缓存  $LAB_URL/cache/sw/bad               vs  /good"
+  echo
+  echo "── 终极 · 没有「改一行就好」的解法 ───────────────────────"
+  echo "  内存泄漏             $LAB_URL/performance/leak/bad       vs  /good"
   echo "  观察指南             $LAB_URL/lighthouse/guide"
-  echo "  问题版 / 优化版      $LAB_URL/lighthouse/audit/bad  vs  /good"
-  echo "  （这两个页面是干净的被测页面，没有侧边观察清单 —— 清单会污染评分）"
+  echo "  Lighthouse 综合评分  $LAB_URL/lighthouse/audit/bad  vs  /good"
+  echo "  （Lighthouse 的两个页面是干净的被测页面，没有侧边观察清单 ——"
+  echo "    清单本身会污染评分）"
+  echo
+  echo "⚠ CORS 预检需要真跨源，只能用 http://localhost:8082 打开，"
+  echo "  公网入口的 Cloudflare Access 会 403 掉预检。见 README「已知限制」。"
   echo
   echo "索引页：$LAB_URL/"
 }

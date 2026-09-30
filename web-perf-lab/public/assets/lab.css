@@ -69,6 +69,12 @@ code {
 .badge.good { color: #7ee787; border-color: #1f4d29; background: #12261a; }
 .badge.info { color: var(--blue); border-color: #1f3d5c; background: #12202e; }
 
+/* 难度分级徽章。颜色随难度升温：青 → 蓝 → 橙 → 红 */
+.badge.lv1 { color: #7ee787; border-color: #1f4d29; background: #12261a; }
+.badge.lv2 { color: #79c0ff; border-color: #1f3d5c; background: #12202e; }
+.badge.lv3 { color: #ffc86b; border-color: #5c4a1f; background: #2b2312; }
+.badge.lv4 { color: #ff9b8f; border-color: #5c2f22; background: #2d1a16; }
+
 .counterpart {
   font-size: 13px;
   text-decoration: none;

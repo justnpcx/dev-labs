@@ -45,6 +45,10 @@ public class StatusController {
         String cleared = LeakRegistry.clearBuckets();
         int stoppedThreads = LeakRegistry.stopHeldThreads();
         int stoppedSpins = LeakRegistry.stopSpinThreads();
+        // 线程池和锁竞争线程不在 LeakRegistry 里（它们有自己的生命周期），
+        // 但同样是"不清掉就会一直占资源"的东西，一起收掉。
+        int droppedPoolTasks = PoolController.shutdownAll();
+        int stoppedContention = LockController.stopContentionThreads();
 
         if (gc) {
             System.gc();
@@ -55,11 +59,14 @@ public class StatusController {
         result.put("cleared", cleared);
         result.put("stoppedHeldThreads", stoppedThreads);
         result.put("stoppedSpinThreads", stoppedSpins);
+        result.put("droppedPoolTasks", droppedPoolTasks);
+        result.put("stoppedContentionThreads", stoppedContention);
         result.put("explicitGc", gc);
         result.put("note", "死锁线程无法通过复位解除；Metaspace 的回落要等 Full GC 跑完，稍等再看 /status");
         result.put("heap", JvmStats.heap());
         result.put("metaspace", JvmStats.metaspace());
-        log.info("复位完成：{}，打断线程 {}/{}", cleared, stoppedThreads, stoppedSpins);
+        log.info("复位完成：{}，打断线程 {}/{}，丢弃池任务 {}，锁竞争线程 {}",
+                cleared, stoppedThreads, stoppedSpins, droppedPoolTasks, stoppedContention);
         return result;
     }
 }

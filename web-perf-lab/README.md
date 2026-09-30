@@ -1,6 +1,7 @@
 # web-perf-lab
 
-面向 **Chrome DevTools** 的实战演练场。15 个场景，每个都有**问题版 / 优化版**
+面向 **Chrome DevTools** 的实战演练场。21 个场景，按
+**初级 → 中级 → 高级 → 终极** 四级排列，每个都有**问题版 / 优化版**
 两个独立页面 —— 开两个标签页并排对比 Network 和 Performance 面板。
 
 ## 快速开始
@@ -22,42 +23,57 @@
 
 ## 场景清单
 
-### Network 面板（7 个）
+21 个场景按难度分四级。**建议从初级顺着往上走** ——
+每一级都在用前一级的技能，跳着看容易变成"照着点一遍但没懂"。
+
+### 初级 · 看懂浏览器怎么加载一个页面（6 个）
+
+现象肉眼可见，不需要会看 Performance 面板。
 
 | 场景 | 练什么 |
 |---|---|
 | 串行 vs 并行请求 | Waterfall 阶梯、`Stalled` 长不等于服务器慢 |
 | 缓存策略 | 强缓存 / 协商缓存 / 无缓存；304 为什么没有 body |
 | 响应压缩 | Size 列两个数字怎么读；`Vary` 头漏了会出事故 |
-| 渲染阻塞 JS | 同步 script 导致白屏；`defer` 只解决白屏不解决卡 |
 | 图片与 CLS | 宽高缺失导致布局偏移；懒加载与 LCP 优先级 |
-| CORS 预检 | 什么时候触发 OPTIONS；`Max-Age` 的作用。**⚠ 仅本地可跑，见「已知限制」** |
-| 慢 TTFB 与重定向链 | Timing 面板拆解；重定向为什么贵 |
-
-### Performance 面板（5 个）
-
-| 场景 | 练什么 |
-|---|---|
-| 长任务阻塞主线程 | Main 轨道红色三角；切片让出 vs Web Worker |
-| 布局抖动 | 读写交替导致强制同步布局；批量读 → 批量写 |
-| 未节流的事件监听 | scroll 触发次数远高于渲染帧；rAF 节流 |
-| 内存泄漏 | Detached DOM；Retainers 面板定位引用链 |
+| 渲染阻塞 JS | 同步 script 导致白屏；`defer` 只解决白屏不解决卡 |
 | 动画属性选择 | `left/top` vs `transform`；合成层与 `will-change` |
 
-### JS 调试（2 个）
+### 中级 · 学会用面板定位问题（8 个）
+
+要会用 Network 的 Timing、Performance 的火焰图，但因果链是单向的。
 
 | 场景 | 练什么 |
 |---|---|
-| **动态 JS 替换** | Sources → Overrides（Local Overrides），改线上 JS 即时生效、刷新保留 |
+| 慢 TTFB 与重定向链 | Timing 面板拆解；重定向为什么贵 |
+| 资源优先级 | `loading="lazy"` 用错地方；preload / fetchpriority / preconnect |
+| 字体加载 | 字体为什么"发现得晚"；FOIT vs FOUT；`font-display` 五个值 |
+| 未节流的事件监听 | scroll 触发次数远高于渲染帧；rAF 节流 |
+| 布局抖动 | 读写交替导致强制同步布局；批量读 → 批量写 |
+| 长任务阻塞主线程 | Main 轨道红色三角；切片让出 vs Web Worker |
+| **动态 JS 替换** | Sources → Overrides，改线上 JS 即时生效、刷新保留 |
 | **断点全家桶** | 条件断点、日志点、DOM 断点、Fetch 断点、事件监听断点、Blackboxing |
 
-### Lighthouse 综合评分（1 个）
+### 高级 · 跨层推理，要改架构（5 个）
+
+要同时考虑网络、渲染、线程、缓存几层，解法往往不是"改一行"。
 
 | 场景 | 练什么 |
 |---|---|
-| 综合评分对照 | **整合测试** —— 一次踩满四类审计，看前面学的东西怎么互相影响 |
+| CORS 预检 | 什么时候触发 OPTIONS；`Max-Age` 的作用。**⚠ 仅本地可跑** |
+| 交互延迟 INP | 主线程忙 → 输入排队；`scheduler.yield` 分片让出 |
+| 主线程卸载 | Web Worker 的四个硬约束；结构化克隆的成本 |
+| 长列表渲染 | 虚拟滚动：复杂度从 `O(n)` 降到 `O(视口)`；`translateY` vs `top` |
+| Service Worker 缓存 | SW 透传 = 白装；stale-while-revalidate；缓存版本号 |
 
-前面 14 个场景各练**一个**技术点，Lighthouse 是**综合评分**：
+### 终极 · 没有「改一行就好」的解法（2 个）
+
+| 场景 | 练什么 |
+|---|---|
+| 内存泄漏 | Detached DOM；**Retainers** 面板定位引用链 |
+| Lighthouse 综合评分 | **整合测试** —— 一次踩满四类审计，看前面学的东西怎么互相影响 |
+
+前面 20 个场景各练**一个**技术点，Lighthouse 是**综合评分**：
 它把几十项审计加权算成 Performance / Accessibility / Best Practices / SEO
 四个分数，正好用来验证你是不是真的把前面那些点串起来了。
 
@@ -118,7 +134,7 @@
 
 | 路径 | 用途 |
 |---|---|
-| `/{network\|performance\|debug\|lighthouse}/<场景>/<bad\|good>` | 场景页 |
+| `/{network\|performance\|debug\|lighthouse\|cache}/<场景>/<bad\|good>` | 场景页 |
 | `/assets/{nocache\|cached\|etag}/{文件}` | 三种缓存策略对照 |
 | `/assets/{nogzip\|gzip}/{文件}` | 压缩对照（300KB 脚本） |
 | `/assets/lh/theme-bad.css?kb=N` | 动态生成的"大块未使用 CSS"（默认 45KB） |
@@ -129,7 +145,19 @@
 | `/api/item/:id` | 300ms 延迟的小 JSON（瀑布流用） |
 | `/api/cors/simple` | 简单请求（不触发预检） |
 | `/api/cors/preflight` | 带自定义头（触发预检） |
-| `/api/image?w=&h=&noise=1` | 动态生成 PNG |
+| `/api/image?w=&h=&noise=1&delay=&nocache=1` | 动态生成 PNG |
+| `/api/items?n=N` | 长列表数据（虚拟滚动用） |
+| `/api/font?delay=N&kb=N` | 延迟返回的**占位字体**（演示 FOIT/FOUT） |
+| `/sw-lab/{bad\|good}/sw.js` | Service Worker 脚本（作用域限 `/sw-lab/<mode>/`） |
+| `/sw-lab/{bad\|good}/data.json?ms=N` | SW 场景的数据源 |
+
+### 难度分级是怎么实现的
+
+21 个场景分四级，但**等级没有写进任何场景页** ——
+`assets/lab.js` 里有一张 `LAB_LEVELS` 表，页面加载时按 `location.pathname`
+查出等级，自动往页头插一个彩色徽章。
+
+这样调整分级只改一处，不用动 42 个 HTML 文件。
 
 ### 路由的返回值约定（踩过坑）
 

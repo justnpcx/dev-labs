@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>字体加载 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<!-- ① 提前发现：不用等 CSS 解析完才知道有字体。
+     crossorigin 是必须的 —— 字体请求永远是 CORS 模式，漏了会重复下载一次 -->
+<link rel="preload" as="font" type="font/woff2" href="/api/font?delay=2500" crossorigin>
+<style>
+  /* ② swap：立刻用 fallback 渲染，字体到了再换。
+     ③ size-adjust / ascent-override：把 fallback 的度量调到接近真字体，
+        换字体时宽度变化小，CLS 也就小。 */
+  @font-face {
+    font-family: 'LabFont';
+    src: url('/api/font?delay=2500') format('woff2');
+    font-display: swap;
+    size-adjust: 100%;
+    ascent-override: 90%;
+    descent-override: 22%;
+  }
+  #foit-demo {
+    font-family: 'LabFont', system-ui, sans-serif;
+    font-size: 30px;
+    line-height: 1.5;
+    margin: 12px 0;
+    padding: 16px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    min-height: 90px;
+  }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>立刻可见</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/font/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新 <code>Ctrl+Shift+R</code>，盯着虚线框</li>
+      <li>文字<b>立刻就有</b>（用的是系统字体），框不是空的</li>
+      <li>2.5 秒后字形会"跳"一下换成目标字体 —— 这就是 <b>FOUT</b></li>
+      <li>Network 里 <code>/api/font</code> 的 <b>Initiator</b> 应该是 <code>preload</code></li>
+      <li>对比问题版：那边是 2.5 秒空白，这边是 0 秒空白</li>
+      <li>用 <b>Performance</b> 面板录一次，看有没有 Layout Shift 标记</li>
+    </ol>
+    <div class="expect">
+      预期：文字 <b>0 秒可见</b><br>
+      代价是字体到达时可能有一次轻微重排（FOUT）。
+    </div>
+    <div class="warn" style="background:#12202e;border-color:var(--blue);color:#a9b6c4">
+      <b>FOIT 和 FOUT 怎么选</b><br>
+      <b>FOIT</b>（不可见）让用户看到空白，最糟的情况是"页面像坏了"。<br>
+      <b>FOUT</b>（先 fallback 再换）让用户立刻能读，代价是一次重排。<br><br>
+      绝大多数场景应该选 FOUT —— <b>能读的内容永远比好看的字形重要</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+    <p class="hint">刷新页面，注意文字是立刻出现、还是等了一会儿：</p>
+
+    <div id="foit-demo">The quick brown fox jumps over the lazy dog</div>
+
+    <div class="row">
+      <button onclick="location.reload()">再刷新一次</button>
+      <span class="hint" id="status">字体延迟 2500ms，但文字不等它</span>
+    </div>
+
+    <h3>改了三处</h3>
+    <pre class="logbox">&lt;!-- ① head 里提前发现 --&gt;
+&lt;link rel="preload" as="font" type="font/woff2"
+      href="/api/font?..." crossorigin&gt;
+
+&lt;!-- ② 别让文字等字体 --&gt;
+@font-face {
+  font-display: swap;              /* 立刻用 fallback */
+
+  /* ③ 把 fallback 的度量对齐真字体，减小换字时的重排 */
+  size-adjust: 100%;
+  ascent-override: 90%;
+  descent-override: 22%;
+}</pre>
+
+    <h3>为什么 <code>crossorigin</code> 不能漏</h3>
+    <p class="hint">
+      字体请求**永远是 CORS 模式**，即使同源。preload 时不写 <code>crossorigin</code>，
+      浏览器会用"无凭证模式"发一次、真正用字体时再发一次 ——
+      Network 里出现两条一模一样的字体请求，等于 preload 白做了。<br>
+      这个坑很隐蔽：功能完全正常，只是白下了一次。
+    </p>
+
+    <h3>再进一步：干脆不用 webfont</h3>
+    <p class="hint">
+      如果只是想要"好看的英文字"，用<b>系统字体栈</b>是零成本的：
+    </p>
+    <pre class="logbox">font-family: system-ui, -apple-system, "Segoe UI",
+             Roboto, "Helvetica Neue", sans-serif;</pre>
+    <p class="hint">
+      零下载、零 FOIT、零 FOUT、零 CLS。代价是各平台字形不同 ——
+      对正文来说这几乎总是划算的。真要品牌字体，就<b>只用于标题</b>，
+      正文走系统栈。
+    </p>
+
+    <div class="warn">
+      <b>自托管还是用第三方字体服务？</b><br>
+      第三方字体域（Google Fonts 之类）要多一次 DNS + TCP + TLS 握手，
+      而且一旦对方慢，你的 LCP 就跟着慢。<br>
+      自托管 + <code>preload</code> 通常更快也更可控，
+      代价是要自己管字体文件的版本和子集化。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+document.fonts.ready.then(() => {
+  labLog(`document.fonts.ready 在 ${(performance.now()).toFixed(0)}ms 触发`);
+  labLog('注意：文字在这之前就已经可读了 —— 这就是 swap 的意义');
+});
+
+onLoad(() => {
+  labLog('页面已渲染。框里应该立刻就有字（系统字体）');
+  labLog('2.5 秒后字形会换成目标字体，可能有一次轻微重排');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>主线程卸载 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+  .pulse { display:flex; align-items:center; gap:12px; margin:10px 0; }
+  .dot { width:14px; height:14px; border-radius:50%; background:var(--red); }
+  #frames { font-family: ui-monospace, Consolas, monospace; font-size: 26px; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>重活跑在主线程上</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/performance/worker/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>先点「开始计数」—— 上面那个数字每秒涨 60 左右</li>
+      <li>再点「算 40 次斐波那契(38)」</li>
+      <li>看数字：<b>直接冻住</b>，一下都不涨</li>
+      <li>试着点「开始计数」按钮 —— <b>点不动</b>，事件在排队</li>
+      <li><b>Performance</b> 面板录一次，看 Main 轨道那一整块红色长任务</li>
+      <li>看 Tasks 列表里的耗时，这就是主线程被独占的时长</li>
+    </ol>
+    <div class="expect">
+      预期：计数完全停止，按钮无响应<br>
+      整个过程大概 1.5~3 秒（取决于机器）。
+    </div>
+    <div class="warn">
+      <b>为什么"计数器停了"是最直观的证据</b><br>
+      <code>requestAnimationFrame</code> 回调必须等主线程空闲才能跑。
+      主线程被同步循环占住，rAF 就排不上队 —— 计数自然停。<br><br>
+      这也是用户感受到的"页面卡死"：<b>不是渲染慢，是根本没机会渲染</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="pulse">
+      <span class="dot"></span>
+      <span id="frames">0</span>
+      <span class="hint">帧（rAF 驱动）</span>
+    </div>
+
+    <div class="row">
+      <button id="toggle" onclick="toggleCount()">开始计数</button>
+      <button onclick="runHeavy()">算 40 次斐波那契(38)</button>
+      <span class="hint" id="status">先开计数，再点右边的</span>
+    </div>
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题出在这一行</h3>
+    <pre class="logbox">// 点击处理里直接跑重活 —— 主线程被独占，谁都别想跑
+button.onclick = () => {
+  const r = fib(38);          // ← 同步递归，纯 CPU
+  render(r);
+};
+
+// 这期间：
+//   requestAnimationFrame  → 排不上队，动画停
+//   下一次点击            → 排在队列里，按钮"点不动"
+//   渲染                  → 没机会发生</pre>
+
+    <h3>哪些活该搬走</h3>
+    <table>
+      <tr><th>该搬去 Worker</th><th>只能留主线程</th></tr>
+      <tr><td>大数组排序 / 过滤 / 聚合</td><td>任何碰 DOM 的操作</td></tr>
+      <tr><td>JSON 解析大报文</td><td><code>window</code> / <code>document</code> 相关</td></tr>
+      <tr><td>加解密、压缩、图片处理</td><td>布局、绘制、合成</td></tr>
+      <tr><td>语法高亮、Markdown 渲染</td><td>事件监听、路由</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      判断标准很简单：<b>这段代码碰不碰 DOM</b>？不碰，就能搬。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+let rafId = null, frames = 0;
+
+function tick() {
+  frames++;
+  document.getElementById('frames').textContent = frames;
+  rafId = requestAnimationFrame(tick);
+}
+
+function toggleCount() {
+  const btn = document.getElementById('toggle');
+  if (rafId === null) {
+    frames = 0;
+    rafId = requestAnimationFrame(tick);
+    btn.textContent = '停止计数';
+    labLog('计数已开始');
+  } else {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+    btn.textContent = '开始计数';
+    labLog(`计数已停止，共 ${frames} 帧`);
+  }
+}
+
+/** 朴素递归斐波那契 —— 故意写得低效，好让一次调用就有几百毫秒 */
+function fib(n) {
+  return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+
+function runHeavy() {
+  const status = document.getElementById('status');
+  status.textContent = '主线程被占…';
+  const before = frames;
+
+  const t0 = performance.now();
+  let acc = 0;
+  for (let i = 0; i < 40; i++) acc += fib(38);
+  const cost = performance.now() - t0;
+
+  labLog(`同步算完，耗时 ${cost.toFixed(0)}ms（结果 ${acc}）`);
+  labLog(`这期间 rAF 只推进了 ${frames - before} 帧 —— 对比一下：正常 1 秒应该 60 帧`);
+  status.textContent = '完成';
+}
+</script>
+</body>
+</html>

@@ -54,6 +54,23 @@
 
   /* 按钮 */
   .btns { display: flex; flex-wrap: wrap; gap: 7px; }
+
+  /* 难度分组表头。flex-basis:100% 强制换行，把按钮分成一段一段的 */
+  .btns .lvlhead {
+    flex-basis: 100%; width: 100%;
+    font-size: 11.5px; color: var(--dim); letter-spacing: .05em;
+    margin: 10px 0 -1px; padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .btns .lvlhead:first-child { margin-top: 0; }
+  .btns .lvlhead .lv {
+    display: inline-block; padding: 1px 8px; border-radius: 4px;
+    border: 1px solid; margin-right: 8px; letter-spacing: .04em;
+  }
+  .lv1 { color: #7ee787; border-color: #1f4d29; background: #12261a; }
+  .lv2 { color: #79c0ff; border-color: #1f3d5c; background: #12202e; }
+  .lv3 { color: #ffc86b; border-color: #5c4a1f; background: #2b2312; }
+  .lv4 { color: #ff9b8f; border-color: #5c2f22; background: #2d1a16; }
   button {
     background: var(--panel2); color: var(--text);
     border: 1px solid var(--border); border-radius: 6px;
@@ -232,12 +249,15 @@
     <h2>触发场景</h2>
     <div class="btns" id="scenarioBtns"></div>
     <div class="hint">
+      <b>按难度分了四级</b>：初级建立直觉 → 中级学会用工具 → 高级理解实现 →
+      终极直面生产事故。建议顺着往上走，别跳级。<br>
       红框按钮会真的把对应资源打爆 —— 都在容器内，有 cgroup 硬限制兜底，不会影响宿主。<br>
       <b>鼠标停在按钮上</b>可以看这个场景对应的核心代码（ⓘ 标记）。<br>
       <b>堆 OOM 之后所有请求都会失败</b>（堆满了），点右上角「复位」即可恢复。<br>
       死锁<b>无法</b>靠复位解除，需要 <code>./lab.sh restart</code>。<br>
       GC 空转需要先 <code>./lab.sh restart gc-overhead</code> 换 profile 才可能触发报错，
-      当前默认 G1 下只会一直空转不报错。
+      当前默认 G1 下只会一直空转不报错。<br>
+      线程池 / 锁竞争 / JIT 这三个场景也都能用 <code>./lab.sh trigger &lt;名字&gt;</code> 触发。
     </div>
   </div>
 
@@ -749,6 +769,89 @@ private static final Map<String, LeakEntry> STATIC_CACHE
 用 LeakEntry 而不是 byte[]，是为了让 jmap -histo 里能一眼看到实例数在涨。`,
   },
   {
+    label: '线程池无界队列', danger: true, url: '/pool/unbounded?tasks=4000&payloadKb=64',
+    src: 'PoolController.java  unbounded()',
+    code: `new ThreadPoolExecutor(
+    2, 2, 0L, TimeUnit.MILLISECONDS,
+    new LinkedBlockingQueue<>(),   // ★ 无界！永远不拒绝
+    namedFactory("lab-pool-unbounded-"));
+
+// 每个任务捕获一份「请求上下文」
+byte[] payload = new byte[payloadKb * 1024];
+pool.execute(() -> { ... 用到 payload ... });`,
+    note: `队列里堆的<b>不只是任务对象</b>，而是每个待处理请求的完整上下文。
+2 个线程消费、4000 个任务 × 64KB ≈ 256MB → 堆被队列吃光。<br>
+这就是《阿里规约》禁用 <code>Executors.newFixedThreadPool</code> 的原因 ——
+它内部就是无界的 LinkedBlockingQueue。<br>
+<b>⚠ 响应体可能拿不到</b>（堆满时序列化会再 OOM，而且 JVM 会先尝试写 heapdump）——
+证据在日志里：<code>docker logs jvm-lab | grep -A 5 OutOfMemoryError</code>。
+和原有的「堆 OOM」按钮是一样的行为。`,
+  },
+  {
+    label: '拒绝策略对比', url: '/pool/bounded?policy=caller&tasks=60',
+    src: 'PoolController.java  bounded()',
+    code: `new ThreadPoolExecutor(
+    2, 2, 0L, TimeUnit.MILLISECONDS,
+    new ArrayBlockingQueue<>(queueSize),   // ★ 有界
+    namedFactory("lab-pool-bounded-"),
+    handler);   // abort / caller / discard / oldest
+
+// caller：被拒绝的任务由**提交线程自己执行** → 背压
+// discard：静默丢弃，不抛异常、不打日志  ← 最危险`,
+    note: `<code>AbortPolicy</code> 抛异常，调用方必须 catch；<br>
+<code>CallerRunsPolicy</code> 让提交线程自己跑 —— <b>这是背压</b>，上游自然慢下来，生产首选；<br>
+<code>DiscardPolicy</code> <b>静默丢任务</b>，服务看着正常，数据就这么没了。<br>
+改 <code>policy=</code> 参数跑一遍，对比 rejected 和 submitCostMillis。`,
+  },
+  {
+    label: '锁竞争现场', danger: true, url: '/lock/contention?threads=8&holdMillis=5000',
+    src: 'LockController.java  contention()',
+    code: `synchronized (GLOBAL_LOCK) {        // ★ 8 个线程抢同一把
+    Thread.sleep(holdMillis);      // 持有 5 秒才放
+}
+
+// 同一时刻只有 1 个能进临界区，
+// 其余 7 个全部 BLOCKED 在 "waiting to lock"`,
+    note: `死锁是「卡住不动」，<b>锁竞争</b>是「照常跑但吞吐上不去」—— 更难发现。<br>
+8 个线程抢 1 个坑位，吞吐量恒等于 <b>1/holdMillis</b>，<b>和线程数无关</b>。
+加线程只会让队列更长。<br>
+用 <code>jstack | grep -A3 lab-lock-contention</code> 看 BLOCKED 现场。`,
+  },
+  {
+    label: '锁方式对比', url: '/lock/benchmark?threads=8&iterations=500000',
+    src: 'LockController.java  benchmark()',
+    code: `// 同一份工作，只换同步方式：
+synchronized (GLOBAL_LOCK) { PLAIN.incrementAndGet(); }  // 全局锁：串行
+synchronized (lockOf(idx)) { PLAIN.incrementAndGet(); }  // 分段锁：并行
+ATOMIC.incrementAndGet();                                // 无锁：CAS`,
+    note: `全局锁耗时 ≈ 单线程耗时 × 线程数，因为临界区完全串行。<br>
+分段锁和无锁接近；高争用下 AtomicLong 会因 CAS 自旋而略慢于分段锁 ——
+<b>但这是没预热的微基准</b>，别当生产结论（见 JIT 预热）。`,
+  },
+  {
+    label: 'JIT 预热', url: '/jit/warmup?rounds=20&iters=300000',
+    src: 'JitController.java  warmup()',
+    code: `for (int r = 0; r < rounds; r++) {
+    long t0 = System.nanoTime();
+    sink += workload(iters);          // 每轮跑同样的计算
+    micros.add((System.nanoTime() - t0) / 1000);
+}
+
+private static double workload(int iters) {
+    double x = 1.0;
+    for (int i = 0; i < iters; i++) {
+        x = Math.sqrt(x * 1.0000001 + i);   // intrinsic，可被编译成硬件指令
+        if (x > 1e9) x = 1.0;
+    }
+    return x;
+}`,
+    note: `同一段代码，跑第一次和跑第一万次能差 <b>几十上百倍</b>。<br>
+返回<b>每轮单独</b>的耗时（不是总数）—— 总数会把这个现象平均掉，
+而"被平均掉"正是微基准骗人的方式。<br>
+看哪一轮陡降，那就是 <b>C2 编译完成</b>的位置。
+加 <code>-XX:+PrintCompilation</code> 能在日志里对到具体时刻。`,
+  },
+  {
     label: '看状态', url: '/status',
     src: 'JvmStats.java  snapshot()',
     code: `root.put("heap",         heap());          // MemoryMXBean
@@ -847,17 +950,66 @@ function attachTip(el, sc) {
   el.addEventListener('click', hideTip);   // 点完就收起来，别挡着看输出
 }
 
+// 难度分级。用 label 索引而不是往每个场景里塞 level 字段 ——
+// 调整分级只改这一处，不用动上面那 17 个场景定义。
+// 分级的依据是「要定位它得懂多少东西」，不是「这个现象有多严重」。
+const LEVELS = {
+  1: ['堆 OOM', '慢速占堆', '栈溢出', 'CPU 打满', '停止空转'],
+  2: ['直接内存 OOM', '线程数 OOM', '死锁', '渐进泄漏 +2MB×5'],
+  3: ['元空间 OOM', 'GC 空转', '锁竞争现场', '锁方式对比'],
+  4: ['线程池无界队列', '拒绝策略对比', 'JIT 预热'],
+};
+const LEVEL_NAME = { 1: '初级', 2: '中级', 3: '高级', 4: '终极' };
+const LEVEL_DESC = {
+  1: '现象直白，报错信息就说明一切 —— 先建立直觉',
+  2: '要配合 jstack / jmap / top 才能定位',
+  3: '要理解 GC / 类加载 / 锁的实现',
+  4: '生产事故级，多个因素交织在一起',
+};
+
+function makeScenarioButton(sc) {
+  const b = document.createElement('button');
+  if (sc.danger) b.className = 'danger';
+  b.textContent = sc.label;
+  b.onclick = () => hit(sc.url);
+  attachTip(b, sc);
+  return b;
+}
+
+function makeLevelHead(lv, text) {
+  const head = document.createElement('div');
+  head.className = 'lvlhead';
+  const tag = lv ? `<span class="lv lv${lv}">${LEVEL_NAME[lv]}</span>` : '<span class="lv">工具</span>';
+  head.innerHTML = tag + text;
+  return head;
+}
+
 function renderScenarioButtons() {
   const box = document.getElementById('scenarioBtns');
   box.innerHTML = '';
-  SCENARIOS.forEach(sc => {
-    const b = document.createElement('button');
-    if (sc.danger) b.className = 'danger';
-    b.textContent = sc.label;
-    b.onclick = () => hit(sc.url);
-    attachTip(b, sc);
-    box.appendChild(b);
-  });
+
+  const byLabel = new Map(SCENARIOS.map((s) => [s.label, s]));
+  const placed = new Set();
+
+  for (const lv of [1, 2, 3, 4]) {
+    box.appendChild(makeLevelHead(lv, LEVEL_DESC[lv]));
+    for (const label of LEVELS[lv]) {
+      const sc = byLabel.get(label);
+      if (!sc) {
+        console.warn('分级表里的场景在 SCENARIOS 里找不到：', label);
+        continue;
+      }
+      box.appendChild(makeScenarioButton(sc));
+      placed.add(label);
+    }
+  }
+
+  // 兜底：以后新加的场景如果忘了登记进 LEVELS，也不能点不到
+  const rest = SCENARIOS.filter((s) => !placed.has(s.label));
+  if (rest.length) {
+    box.appendChild(makeLevelHead(0, '随时可用'));
+    rest.forEach((sc) => box.appendChild(makeScenarioButton(sc)));
+  }
 }
 
 renderScenarioButtons();

@@ -8,7 +8,7 @@
 <style>
   .hero { text-align: center; padding: 34px 20px 10px; }
   .hero h1 { font-size: 24px; margin: 0 0 10px; }
-  .hero p { color: var(--dim); margin: 0 auto; max-width: 620px; font-size: 13.5px; }
+  .hero p { color: var(--dim); margin: 0 auto; max-width: 660px; font-size: 13.5px; }
 
   .group { margin-bottom: 26px; }
   .group > h2 {
@@ -33,6 +33,18 @@
   .sc a.solo { color: var(--blue); border-color: #1f3d5c; background: #12202e; }
   .sc a:hover { filter: brightness(1.35); }
 
+  /* 难度标签，颜色随难度升温 */
+  .lvl {
+    display: inline-block; padding: 2px 9px; border-radius: 4px;
+    font-size: 11px; letter-spacing: .04em; border: 1px solid;
+    text-transform: none; vertical-align: middle;
+  }
+  .lvl1 { color: #7ee787; border-color: #1f4d29; background: #12261a; }
+  .lvl2 { color: #79c0ff; border-color: #1f3d5c; background: #12202e; }
+  .lvl3 { color: #ffc86b; border-color: #5c4a1f; background: #2b2312; }
+  .lvl4 { color: #ff9b8f; border-color: #5c2f22; background: #2d1a16; }
+  .group > h2 .sub { text-transform: none; letter-spacing: 0; font-size: 12px; }
+
   .tip {
     background: var(--panel); border: 1px solid var(--border);
     border-left: 3px solid var(--blue); border-radius: 8px;
@@ -48,9 +60,10 @@
 <div class="hero">
   <h1>前端性能演练场</h1>
   <p>
-    15 个场景，每个都有 <b style="color:#ffb4ae">问题版</b> 和
+    21 个场景，每个都有 <b style="color:#ffb4ae">问题版</b> 和
     <b style="color:#7ee787">优化版</b> 两个独立页面。
-    开两个标签页并排对比，在 Chrome DevTools 的 Network / Performance 面板里看差别。
+    开两个标签页并排对比，在 Chrome DevTools 里看差别。<br>
+    <b>按难度分四级，建议从初级顺着往上走。</b>
   </p>
 </div>
 
@@ -60,16 +73,18 @@
     <b>开始之前，先做这三件事：</b>
     <ol>
       <li>用 Chrome 打开，按 <code>F12</code> 打开 DevTools</li>
-      <li>切到 <b>Network</b> 面板，勾上 <b>Disable cache</b>（否则缓存场景看不出来）</li>
+      <li>切到 <b>Network</b> 面板，勾上 <b>Disable cache</b>（否则缓存类场景看不出来）</li>
       <li>每次测完按 <code>Ctrl+Shift+R</code> 硬刷新，保证数据干净</li>
     </ol>
     <div style="margin-top:10px">
-      提示：页面右上角都有「看优化版 →」按钮，可以直接在问题版和优化版之间跳转。
+      页面右上角都有「看优化版 →」按钮，可以直接在问题版和优化版之间跳转。
+      页面标题下方的彩色徽章就是它的难度级别。
     </div>
   </div>
 
   <div class="group">
-    <h2>Network 面板 · 7 个</h2>
+    <h2><span class="lvl lvl1">初级</span>
+      <span class="sub">看懂浏览器怎么加载一个页面 · 6 个</span></h2>
     <div class="scenarios">
       <div class="sc">
         <h3>串行 vs 并行请求</h3>
@@ -96,14 +111,6 @@
         </div>
       </div>
       <div class="sc">
-        <h3>渲染阻塞 JS</h3>
-        <p>head 里的同步 script 会让首屏白屏。对比 defer / async 的执行时机。</p>
-        <div class="links">
-          <a class="bad" href="/network/blocking/bad">问题版</a>
-          <a class="good" href="/network/blocking/good">优化版</a>
-        </div>
-      </div>
-      <div class="sc">
         <h3>图片与 CLS</h3>
         <p>没写宽高会导致布局偏移（CLS）。还有懒加载和 LCP 优先级。</p>
         <div class="links">
@@ -112,57 +119,11 @@
         </div>
       </div>
       <div class="sc">
-        <h3>CORS 预检</h3>
-        <p>简单请求 vs 触发 OPTIONS 预检。看多出来的那次往返。</p>
+        <h3>渲染阻塞 JS</h3>
+        <p>head 里的同步 script 会让首屏白屏。对比 defer / async 的执行时机。</p>
         <div class="links">
-          <a class="bad" href="/network/cors/bad">问题版</a>
-          <a class="good" href="/network/cors/good">优化版</a>
-        </div>
-      </div>
-      <div class="sc">
-        <h3>慢 TTFB 与重定向链</h3>
-        <p>拆开 Timing 面板：Stalled / TTFB / Content Download 各占多少。</p>
-        <div class="links">
-          <a class="bad" href="/network/ttfb/bad">问题版</a>
-          <a class="good" href="/network/ttfb/good">优化版</a>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="group">
-    <h2>Performance 面板 · 5 个</h2>
-    <div class="scenarios">
-      <div class="sc">
-        <h3>长任务阻塞主线程</h3>
-        <p>Main 轨道上的红色三角。看 TBT 和页面响应有多迟钝。</p>
-        <div class="links">
-          <a class="bad" href="/performance/longtask/bad">问题版</a>
-          <a class="good" href="/performance/longtask/good">优化版</a>
-        </div>
-      </div>
-      <div class="sc">
-        <h3>布局抖动</h3>
-        <p>读写交替导致「强制同步布局」。Performance 里紫色 Layout 反复出现。</p>
-        <div class="links">
-          <a class="bad" href="/performance/thrash/bad">问题版</a>
-          <a class="good" href="/performance/thrash/good">优化版</a>
-        </div>
-      </div>
-      <div class="sc">
-        <h3>未节流的事件监听</h3>
-        <p>滚动时每帧都在跑重活。对比节流 / rAF 之后的效果。</p>
-        <div class="links">
-          <a class="bad" href="/performance/listener/bad">问题版</a>
-          <a class="good" href="/performance/listener/good">优化版</a>
-        </div>
-      </div>
-      <div class="sc">
-        <h3>内存泄漏</h3>
-        <p>detached DOM：节点从页面上移除了，但还被 JS 引用着。用堆快照对比。</p>
-        <div class="links">
-          <a class="bad" href="/performance/leak/bad">问题版</a>
-          <a class="good" href="/performance/leak/good">优化版</a>
+          <a class="bad" href="/network/blocking/bad">问题版</a>
+          <a class="good" href="/network/blocking/good">优化版</a>
         </div>
       </div>
       <div class="sc">
@@ -177,27 +138,57 @@
   </div>
 
   <div class="group">
-    <h2>Lighthouse 综合评分 · 1 个</h2>
+    <h2><span class="lvl lvl2">中级</span>
+      <span class="sub">学会用面板定位问题 · 8 个</span></h2>
     <div class="scenarios">
       <div class="sc">
-        <h3>综合评分对照</h3>
-        <p>
-          前面 14 个场景各练一个技术点，这个是<b>整合测试</b> ——
-          故意踩满 Performance / Accessibility / Best Practices / SEO 四类审计，
-          跑一次 Lighthouse 就能看到前面学的东西怎么互相影响。
-        </p>
+        <h3>慢 TTFB 与重定向链</h3>
+        <p>拆开 Timing 面板：Stalled / TTFB / Content Download 各占多少。</p>
         <div class="links">
-          <a class="solo" href="/lighthouse/guide">观察指南</a>
-          <a class="bad" href="/lighthouse/audit/bad">问题版</a>
-          <a class="good" href="/lighthouse/audit/good">优化版</a>
+          <a class="bad" href="/network/ttfb/bad">问题版</a>
+          <a class="good" href="/network/ttfb/good">优化版</a>
         </div>
       </div>
-    </div>
-  </div>
-
-  <div class="group">
-    <h2>JS 调试 · 2 个</h2>
-    <div class="scenarios">
+      <div class="sc">
+        <h3>资源优先级</h3>
+        <p>LCP 图加了 <code>loading="lazy"</code> 会被降到 Low。看 Priority 列和 Start time。</p>
+        <div class="links">
+          <a class="bad" href="/network/priority/bad">问题版</a>
+          <a class="good" href="/network/priority/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>字体加载</h3>
+        <p>字体发现得比图片晚得多。对比 <code>font-display: block</code> 的 FOIT 和 <code>swap</code>。</p>
+        <div class="links">
+          <a class="bad" href="/network/font/bad">问题版</a>
+          <a class="good" href="/network/font/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>未节流的事件监听</h3>
+        <p>滚动时每帧都在跑重活。对比节流 / rAF 之后的效果。</p>
+        <div class="links">
+          <a class="bad" href="/performance/listener/bad">问题版</a>
+          <a class="good" href="/performance/listener/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>布局抖动</h3>
+        <p>读写交替导致「强制同步布局」。Performance 里紫色 Layout 反复出现。</p>
+        <div class="links">
+          <a class="bad" href="/performance/thrash/bad">问题版</a>
+          <a class="good" href="/performance/thrash/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>长任务阻塞主线程</h3>
+        <p>Main 轨道上的红色三角。看 TBT 和页面响应有多迟钝。</p>
+        <div class="links">
+          <a class="bad" href="/performance/longtask/bad">问题版</a>
+          <a class="good" href="/performance/longtask/good">优化版</a>
+        </div>
+      </div>
       <div class="sc">
         <h3>动态 JS 替换（Local Overrides）</h3>
         <p>不改服务端代码，在浏览器里直接改线上 JS 并即时生效、刷新保留。</p>
@@ -210,6 +201,84 @@
         <p>条件断点、日志点、DOM 断点、XHR 断点、事件监听断点、Blackboxing。</p>
         <div class="links">
           <a class="solo" href="/debug/breakpoints">打开练习</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2><span class="lvl lvl3">高级</span>
+      <span class="sub">跨层推理，要改架构 · 5 个</span></h2>
+    <div class="scenarios">
+      <div class="sc">
+        <h3>CORS 预检</h3>
+        <p>简单请求 vs 触发 OPTIONS 预检。看多出来的那次往返。<b>需本地访问</b>。</p>
+        <div class="links">
+          <a class="bad" href="/network/cors/bad">问题版</a>
+          <a class="good" href="/network/cors/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>交互延迟 INP</h3>
+        <p>点击后同步跑 700ms，主线程被独占、输入排队。对比分片让出主线程。</p>
+        <div class="links">
+          <a class="bad" href="/performance/inp/bad">问题版</a>
+          <a class="good" href="/performance/inp/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>主线程卸载（Web Worker）</h3>
+        <p>同样的计算，放在主线程 vs 扔进 Worker。看 Performance 里多出来的 Worker 轨道。</p>
+        <div class="links">
+          <a class="bad" href="/performance/worker/bad">问题版</a>
+          <a class="good" href="/performance/worker/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>长列表渲染（虚拟滚动）</h3>
+        <p>一万条全塞进 DOM vs 只渲染可视区。DOM 节点数从三万降到三十。</p>
+        <div class="links">
+          <a class="bad" href="/performance/virtual/bad">问题版</a>
+          <a class="good" href="/performance/virtual/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>Service Worker 缓存</h3>
+        <p>SW 挂了但 fetch 透传 = 白装。对比 stale-while-revalidate 的秒回。</p>
+        <div class="links">
+          <a class="bad" href="/cache/sw/bad">问题版</a>
+          <a class="good" href="/cache/sw/good">优化版</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2><span class="lvl lvl4">终极</span>
+      <span class="sub">没有「改一行就好」的解法 · 2 个</span></h2>
+    <div class="scenarios">
+      <div class="sc">
+        <h3>内存泄漏</h3>
+        <p>
+          detached DOM：节点从页面上移除了，但还被 JS 引用着。
+          要靠堆快照 + <b>Retainers</b> 面板反复逼近引用链。
+        </p>
+        <div class="links">
+          <a class="bad" href="/performance/leak/bad">问题版</a>
+          <a class="good" href="/performance/leak/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>Lighthouse 综合评分</h3>
+        <p>
+          前面 20 个场景各练一个点，这个是<b>整合测试</b> ——
+          故意踩满 Performance / Accessibility / Best Practices / SEO 四类审计，
+          看它们怎么互相牵制。
+        </p>
+        <div class="links">
+          <a class="solo" href="/lighthouse/guide">观察指南</a>
+          <a class="bad" href="/lighthouse/audit/bad">问题版</a>
+          <a class="good" href="/lighthouse/audit/good">优化版</a>
         </div>
       </div>
     </div>
