@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>响应式图片 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际分辨率」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+<style>
+  #hero { width: 100%; height: auto; display: block; border-radius: 8px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>一张大图发给所有人</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/responsive/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> + <b>Disable cache</b>，硬刷新</li>
+      <li>找 <code>/api/image</code> 那条，看 <b>Size 列</b></li>
+      <li>看它下载了多少字节 —— 而它显示区域只有几百像素宽</li>
+      <li><b>Elements</b> 面板选中 <code>&lt;img&gt;</code>，在 Console 里敲
+          <code>$0.currentSrc</code>，看浏览器实际用了哪张</li>
+      <li>把浏览器窗口<b>拖窄到手机宽度</b>再刷新 —— 下载量<b>一点没变</b></li>
+      <li>看下面报出的「图片实际显示宽度 vs 文件宽度」</li>
+    </ol>
+    <div class="expect">
+      预期：无论窗口多窄，都下载 <b>整张 1600px 宽</b> 的图<br>
+      手机用户为一个 375px 的位置下了 4MB 的东西。
+    </div>
+    <div class="warn">
+      <b>问题不只是"大"</b><br>
+      图片通常是页面上<b>体积最大</b>的资源。一个页面十几张图，
+      每张都按桌面最大尺寸发 —— 移动端的流量和内存就是这么被吃掉的。<br><br>
+      而且这张图还<b>没写 width/height</b>，加载完会撑开布局，
+      顺手再送一个 CLS。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>本场景演示什么、不演示什么</b><br>
+      演示：<b>尺寸选择</b>（srcset / sizes / DPR）—— 这部分完全真实可测。<br>
+      不演示：<b>格式选择</b>（WebP / AVIF）。这个演练场零依赖，
+      Node 内置没有 WebP/AVIF 编码器，造不出真文件。
+      格式的用法在优化版页面里讲了，但省下的体积我没法在这里实测。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div id="metrics"></div>
+
+    <img id="hero"
+         src="/api/image?w=1600&h=900&noise=1&nocache=1"
+         alt="首屏大图">
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题就这一个属性</h3>
+    <pre class="logbox">&lt;img src="/hero-1600.png"&gt;
+
+&lt;!-- 没有 srcset：浏览器只有一个选择，只能下这张 --&gt;
+&lt;!-- 没有 sizes：就算给了 srcset，也不知道要挑多大的 --&gt;
+&lt;!-- 没有 width/height：加载完撑开布局 → CLS --&gt;</pre>
+
+    <h3>浏览器怎么选图</h3>
+    <table>
+      <tr><th>属性</th><th>作用</th></tr>
+      <tr><td class="mono">srcset</td><td>提供<b>候选列表</b>：有哪些尺寸/格式可选</td></tr>
+      <tr><td class="mono">sizes</td><td>告诉浏览器<b>实际要显示多宽</b>，它才选得对</td></tr>
+      <tr><td class="mono">width/height</td><td>预留位置，避免加载完撑开布局</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      关键点：<b>选哪张是浏览器决定的，不是你</b>。
+      你要做的是把候选和约束告诉它 —— 少了 <code>sizes</code>，
+      浏览器只能假设图片占满整屏，照样挑大的。
+    </p>
+
+    <div class="warn">
+      <b>DPR 也要算进去</b><br>
+      在 2 倍屏（绝大多数手机）上，一个 400px 宽的显示区域
+      需要 800px 的图才够清晰。<br>
+      所以 <code>srcset</code> 里的 <code>w</code> 描述符配合
+      <code>sizes</code> 会算出 <code>400px × 2 = 800w</code>，
+      浏览器自动挑 800 那档 —— 这套计算你不需要自己写。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+onLoad(() => {
+  const img = document.getElementById('hero');
+  const report = () => {
+    const e = performance.getEntriesByName(img.currentSrc).pop();
+    const bytes = e ? e.transferSize || e.encodedBodySize : 0;
+    const shown = Math.round(img.getBoundingClientRect().width);
+    const dpr = window.devicePixelRatio;
+
+    document.getElementById('metrics').innerHTML = [
+      ['视口宽度', window.innerWidth + 'px'],
+      ['设备像素比 DPR', dpr],
+      ['图片实际显示宽度', shown + 'px'],
+      ['需要多少像素才够', Math.round(shown * dpr) + 'w'],
+      ['实际下载的宽度', img.naturalWidth + 'px'],
+      ['下载字节数', (bytes / 1024).toFixed(0) + ' KB'],
+      ['浪费比例', Math.round((1 - (shown * dpr) / img.naturalWidth) * 100) + '%'],
+    ].map(([k, v]) =>
+      `<div class="row" style="justify-content:space-between;margin:0;padding:4px 0;border-bottom:1px dashed var(--border-soft)">
+         <span class="hint">${k}</span><span class="mono">${v}</span></div>`).join('');
+
+    labLog(`图片加载完成：下载了 ${img.naturalWidth}px 宽的版本，` +
+           `${(bytes / 1024).toFixed(0)} KB`);
+    labLog(`但它的显示区域只有 ${shown}px（DPR ${dpr}，其实 ${Math.round(shown * dpr)}px 就够了）`);
+    labLog('');
+    labLog('把窗口拖窄再刷新 —— 下载量不会变，因为浏览器没得选');
+  };
+  if (img.complete) report(); else img.addEventListener('load', report);
+});
+</script>
+</body>
+</html>

@@ -74,7 +74,7 @@
 <div class="hero">
   <h1>前端性能演练场</h1>
   <p>
-    25 个场景，每个都有 <b style="color:var(--red)">问题版</b> 和
+    26 个场景，每个都有 <b style="color:var(--red)">问题版</b> 和
     <b style="color:var(--green)">优化版</b> 两个独立页面。
     开两个标签页并排对比，在 Chrome DevTools 里看差别。<br>
     <b>按难度分四级，建议从初级顺着往上走。</b>
@@ -154,7 +154,7 @@
 
   <div class="group">
     <h2><span class="lvl lvl2">中级</span>
-      <span class="sub">学会用面板定位问题 · 10 个</span></h2>
+      <span class="sub">学会用面板定位问题 · 11 个</span></h2>
     <div class="scenarios">
       <div class="sc">
         <h3>慢 TTFB 与重定向链</h3>
@@ -178,6 +178,14 @@
         <div class="links">
           <a class="bad" href="/network/font/bad">问题版</a>
           <a class="good" href="/network/font/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>响应式图片</h3>
+        <p>一张 1600px 的图发给所有设备。对比 <code>srcset</code>/<code>sizes</code> 让浏览器按 DPR 自己挑。</p>
+        <div class="links">
+          <a class="bad" href="/network/responsive/bad">问题版</a>
+          <a class="good" href="/network/responsive/good">优化版</a>
         </div>
       </div>
       <div class="sc">

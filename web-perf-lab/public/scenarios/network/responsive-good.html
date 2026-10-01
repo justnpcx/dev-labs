@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>响应式图片 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+<style>
+  #hero { width: 100%; height: auto; display: block; border-radius: 8px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>让浏览器自己挑</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/responsive/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li><b>Network</b> + <b>Disable cache</b>，硬刷新</li>
+      <li>看 <code>/api/image</code> 请求的 URL —— 里面的 <code>w=</code> <b>不是 1600</b></li>
+      <li>对比问题版的 Size 列，看省了多少</li>
+      <li><b>Elements</b> 选中 <code>&lt;img&gt;</code>，Console 里敲
+          <code>$0.currentSrc</code> —— 这是浏览器实际选中的那张</li>
+      <li>把窗口<b>拖窄</b>再刷新：下载的 <code>w=</code> <b>跟着变小</b></li>
+      <li>用 DevTools 的设备工具栏切到 <b>DPR 3</b> 的机型再刷新 —— 又变大了</li>
+    </ol>
+    <div class="expect">
+      预期：桌面 DPR 1 下下载 <b>800w</b>（1056 KB），窗口拖到 375px 且 DPR 1 时降到
+      <b>400w</b>（264 KB）<br>
+      同一张图，不同设备拿到的字节数<b>自动不同</b> —— 而问题版永远是 1600w / 4221 KB。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>格式那一半，本场景演示不了</b><br>
+      真实项目里响应式图片还有另一半：用 <code>&lt;picture&gt;</code> 优先发
+      WebP / AVIF，不支持再退回 PNG/JPEG —— 通常还能再省 30~60%。<br><br>
+      <b>但这个演练场零依赖</b>，Node 内置没有 WebP/AVIF 编码器，造不出真文件。
+      我不想拿一个改了 Content-Type 的 PNG 来假装 —— 那样省下的字节是假的，
+      解码还会失败。<br>
+      所以这一半只给用法，体积收益请以你项目里的实测为准。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div id="metrics"></div>
+
+    <!-- ★ 三个关键属性：
+         srcset  给候选（400 / 800 / 1600 三档）
+         sizes   告诉浏览器实际显示多宽 —— 少了它，浏览器只能假设占满整屏
+         width/height  预留位置，避免加载完撑开布局（CLS）
+         选哪一档由浏览器算：显示宽度 × DPR 最接近哪档就选哪档 -->
+    <img id="hero"
+         src="/api/image?w=800&h=450&noise=1&nocache=1"
+         srcset="/api/image?w=400&h=225&noise=1&nocache=1 400w,
+                 /api/image?w=800&h=450&noise=1&nocache=1 800w,
+                 /api/image?w=1600&h=900&noise=1&nocache=1 1600w"
+         sizes="(max-width: 600px) 100vw, 800px"
+         width="1600" height="900"
+         alt="首屏大图">
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动就是这三个属性</h3>
+    <pre class="logbox">&lt;img
+  src="/hero-800.png"
+  srcset="/hero-400.png   400w,
+          /hero-800.png   800w,
+          /hero-1600.png 1600w"
+  sizes="(max-width: 600px) 100vw, 800px"
+  width="1600" height="900"&gt;</pre>
+
+    <h3>浏览器是怎么选的（本机实测）</h3>
+    <table>
+      <tr><th>视口</th><th>DPR</th><th>sizes 算出</th><th>三档密度</th><th>选中</th><th>下载</th></tr>
+      <tr><td>375px</td><td>1</td><td class="mono">375px</td><td class="mono">1.07 / 2.13 / 4.27</td><td class="mono">400w</td><td>264 KB</td></tr>
+      <tr><td>375px</td><td>2</td><td class="mono">375px</td><td class="mono">1.07 / 2.13 / 4.27</td><td class="mono">800w</td><td>1056 KB</td></tr>
+      <tr><td>375px</td><td>3</td><td class="mono">375px</td><td class="mono">1.07 / 2.13 / 4.27</td><td class="mono">800w</td><td>1056 KB</td></tr>
+      <tr><td>1280px</td><td>1</td><td class="mono">800px</td><td class="mono">0.50 / 1.00 / 2.00</td><td class="mono">800w</td><td>1056 KB</td></tr>
+      <tr><td>1280px</td><td>2</td><td class="mono">800px</td><td class="mono">0.50 / 1.00 / 2.00</td><td class="mono">1600w</td><td>4221 KB</td></tr>
+      <tr><td>1280px</td><td>3</td><td class="mono">800px</td><td class="mono">0.50 / 1.00 / 2.00</td><td class="mono">1600w</td><td>4221 KB</td></tr>
+    </table>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>实测发现：Chrome 选的是「密度最接近 DPR」那一档</b><br>
+      不是"不小于 DPR 的最小档"（规范里读起来像后者）。<br>
+      看第三行：375px + DPR 3 时，密度 2.13 离 3 差 0.87，
+      而 4.27 差 1.27 —— Chrome 选了<b>更接近但偏小</b>的 800w。<br><br>
+      这是实现选择（更省流量），<b>别照着自己推的规则去预期浏览器行为</b>。
+      不同浏览器、不同版本都可能不一样 —— 想确认就看
+      <code>$0.currentSrc</code>。
+    </div>
+
+    <h3>格式：用法在这里，收益请自己实测</h3>
+    <pre class="logbox">&lt;picture&gt;
+  &lt;source type="image/avif" srcset="/hero-800.avif 800w, ..." sizes="..."&gt;
+  &lt;source type="image/webp" srcset="/hero-800.webp 800w, ..." sizes="..."&gt;
+  &lt;img src="/hero-800.png" srcset="..." sizes="..." width="1600" height="900"&gt;
+&lt;/picture&gt;
+
+&lt;!-- 浏览器从上往下试，第一个能解码的就用。都不支持才落到 &lt;img&gt;。 --&gt;</pre>
+    <p class="hint">
+      经验值（<b>不是在本机测的</b>，仅供参考）：
+      WebP 比 JPEG 省 25~35%，AVIF 再省 20~30%，但编码更慢。
+      具体能省多少<b>完全取决于图片内容</b> —— 照片类收益大，图标类收益小。
+    </p>
+
+    <div class="warn">
+      <b>别忘了自动化</b><br>
+      真实项目里不会手写这些 —— 用构建插件（<code>vite-imagetools</code>、
+      <code>next/image</code>、<code>sharp</code> 脚本）自动生成多档尺寸和格式，
+      再自动吐出正确的 <code>srcset</code>。<br>
+      手写的 <code>srcset</code> 迟早会和实际文件对不上。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+onLoad(() => {
+  const img = document.getElementById('hero');
+  const report = () => {
+    const e = performance.getEntriesByName(img.currentSrc).pop();
+    const bytes = e ? e.transferSize || e.encodedBodySize : 0;
+    const shown = Math.round(img.getBoundingClientRect().width);
+    const dpr = window.devicePixelRatio;
+    const need = Math.round(shown * dpr);
+    const picked = Number((img.currentSrc.match(/w=(\d+)/) || [])[1] || img.naturalWidth);
+
+    document.getElementById('metrics').innerHTML = [
+      ['视口宽度', window.innerWidth + 'px'],
+      ['设备像素比 DPR', dpr],
+      ['图片实际显示宽度', shown + 'px'],
+      ['需要多少像素才够', need + 'w'],
+      ['浏览器选中的', picked + 'w'],
+      ['下载字节数', (bytes / 1024).toFixed(0) + ' KB'],
+    ].map(([k, v]) =>
+      `<div class="row" style="justify-content:space-between;margin:0;padding:4px 0;border-bottom:1px dashed var(--border-soft)">
+         <span class="hint">${k}</span><span class="mono">${v}</span></div>`).join('');
+
+    labLog(`浏览器选中了 ${picked}w 那档（显示 ${shown}px × DPR ${dpr} = 需要 ${need}w）`);
+    labLog(`下载 ${(bytes / 1024).toFixed(0)} KB —— 对比问题版固定下 1600w / 4221 KB`);
+    labLog(`（注意：选的是"密度最接近 DPR"那档，不一定刚好 >= ${need}w）`);
+    labLog('');
+    labLog('把窗口拖窄 / 改 DPR 再刷新，看它自动换档');
+  };
+  if (img.complete) report(); else img.addEventListener('load', report);
+});
+</script>
+</body>
+</html>
