@@ -58,6 +58,31 @@ public class GcLogController {
     private static final Pattern PAUSE = Pattern.compile(
             "GC\\((\\d+)\\)\\s+Pause\\s+(\\w+)[^0-9]*(\\d+)M->(\\d+)M\\((\\d+)M\\)\\s+([\\d.]+)ms");
 
+    /**
+     * ZGC 的 STW 阶段停顿，格式和上面**完全不同**：
+     *
+     *   [.][0.747s][info][gc,phases] GC(0) Pause Mark Start 0.007ms
+     *
+     * 没有 <code>24M-&gt;3M(256M)</code> 这段堆用量 —— 所以上面那个正则一条都匹配不上。
+     * 这是个很容易踩的坑：换到 ZGC 之后 GC 解读会**静默返回空**，看起来像功能坏了。
+     *
+     * 类型只有 Mark Start / Mark End / Relocate Start 三种（ZGC 的其他阶段是并发的，
+     * 不停顿）。注意**一次 GC 周期会产生 3 条这样的停顿**，所以按条数统计时
+     * gcCount 约等于周期数的 3 倍 —— 这也是为什么下面要单独给出 cycleCount。
+     */
+    private static final Pattern ZGC_PHASE = Pattern.compile(
+            "GC\\((\\d+)\\)\\s+Pause\\s+([A-Za-z][A-Za-z ]*?)\\s+([\\d.]+)ms\\s*$");
+
+    /**
+     * ZGC 的**周期**汇总行（这才是"一次 GC"）：
+     *
+     *   [.][0.795s][info][gc] GC(0) Garbage Collection (Warmup) 28M(11%)-&gt;10M(4%)
+     *
+     * 用它算周期数和回收量（分配速率要靠这个，因为 ZGC 没有 Young GC 的概念）。
+     */
+    private static final Pattern ZGC_CYCLE = Pattern.compile(
+            "GC\\((\\d+)\\)\\s+Garbage Collection\\s+\\(([^)]*)\\)\\s+(\\d+)M\\(\\d+%\\)->(\\d+)M\\(\\d+%\\)");
+
     /** 从日志行里取 uptime（形如 [12.345s]），用来算 GC 间隔 */
     private static final Pattern UPTIME = Pattern.compile("\\[(\\d+\\.\\d+)s\\]");
 
@@ -80,6 +105,8 @@ public class GcLogController {
         }
 
         List<Pause> pauses = new ArrayList<>();
+        List<long[]> zgcCycles = new ArrayList<>();   // {uptimeMs, beforeMb, afterMb}
+        String collector = "unknown";
         long totalLines = 0;
         long startUptimeMs = -1;
         long endUptimeMs = -1;
@@ -114,6 +141,32 @@ public class GcLogController {
                             Long.parseLong(m.group(5)),
                             Double.parseDouble(m.group(6)),
                             uptime));
+                } else {
+                    // G1 / Parallel / Serial 没匹配上，再试 ZGC 的阶段停顿
+                    Matcher z = ZGC_PHASE.matcher(line);
+                    if (z.find()) {
+                        pauses.add(new Pause(
+                                Long.parseLong(z.group(1)),
+                                z.group(2),
+                                -1, -1, -1,          // ZGC 的停顿行不带堆用量
+                                Double.parseDouble(z.group(3)),
+                                uptime));
+                    }
+                }
+
+                Matcher zc = ZGC_CYCLE.matcher(line);
+                if (zc.find()) {
+                    zgcCycles.add(new long[]{
+                            uptime,
+                            Long.parseLong(zc.group(3)),
+                            Long.parseLong(zc.group(4))});
+                }
+
+                if ("unknown".equals(collector)) {
+                    if (line.contains("The Z Garbage Collector")) collector = "zgc";
+                    else if (line.contains("G1 Evacuation Pause")) collector = "g1";
+                    else if (line.contains("Using Parallel")) collector = "parallel";
+                    else if (line.contains("Using Serial")) collector = "serial";
                 }
                 // 防止读一个巨大的日志把响应拖死
                 if (totalLines > maxLines) break;
@@ -125,6 +178,7 @@ public class GcLogController {
         }
 
         result.put("outcome", pauses.isEmpty() ? "日志里还没有带停顿的 GC 记录" : "ok");
+        result.put("collector", collector);
         result.put("logFile", file.toString());
         result.put("logSizeKb", sizeKb(file));
         result.put("linesScanned", totalLines);
@@ -152,6 +206,13 @@ public class GcLogController {
 
         Map<String, Object> overview = new LinkedHashMap<>();
         overview.put("gcCount", pauses.size());
+        if ("zgc".equals(collector)) {
+            // ZGC 一条周期 = 3 条阶段停顿。不说明的话 gcCount 会被误读成"GC 次数"
+            overview.put("cycleCount", zgcCycles.size());
+            overview.put("countNote", "gcCount 是**阶段停顿条数**；ZGC 一个周期有 3 个"
+                    + "STW 阶段（Mark Start / Mark End / Relocate Start），"
+                    + "所以真正的 GC 周期数是 cycleCount");
+        }
         overview.put("totalPauseMs", round(totalPauseMs));
         overview.put("avgPauseMs", round(totalPauseMs / pauses.size()));
         overview.put("maxPauseMs", round(maxPauseMs));
@@ -169,11 +230,11 @@ public class GcLogController {
         // ── ② 停顿分布 ──
         result.put("pauseHistogram", histogram(pauses));
 
-        // ── ③ 分配速率（从 Young GC 的回收量 + 间隔推算）──
-        result.put("allocationRate", allocationRate(pauses));
+        // ── ③ 分配速率（从回收量 + 间隔推算）──
+        result.put("allocationRate", allocationRate(pauses, zgcCycles));
 
         // ── ④ 自动诊断 ──
-        result.put("diagnosis", diagnose(pauses, totalPauseMs, startUptimeMs, endUptimeMs));
+        result.put("diagnosis", diagnose(pauses, totalPauseMs, startUptimeMs, endUptimeMs, collector));
 
         result.put("recentPauses", pauses.subList(Math.max(0, pauses.size() - 12), pauses.size()));
         result.put("howToCompare", "换 GC 再跑同一份负载：./lab.sh restart g1 | parallel | serial，"
@@ -211,21 +272,37 @@ public class GcLogController {
      * 注意这只是估算：如果有大对象直接进老年代，或者有对象活过了 Young，
      * 这个数字会偏低。但它对判断量级足够了。
      */
-    private Map<String, Object> allocationRate(List<Pause> pauses) {
+    private Map<String, Object> allocationRate(List<Pause> pauses, List<long[]> zgcCycles) {
         Map<String, Object> map = new LinkedHashMap<>();
         long reclaimedMb = 0;
         long firstUp = -1, lastUp = -1;
         int youngCount = 0;
 
-        for (Pause p : pauses) {
-            if (!"Young".equals(p.type) && !"Mixed".equals(p.type)) continue;
-            reclaimedMb += Math.max(0, p.beforeMb - p.afterMb);
-            youngCount++;
-            if (p.uptimeMs >= 0) {
-                if (firstUp < 0) firstUp = p.uptimeMs;
-                lastUp = p.uptimeMs;
+        // ZGC 没有 Young GC 的概念，用「周期回收量」算 —— 语义一样：
+        // 一个周期回收掉多少，约等于这段时间新分配了多少。
+        if (!zgcCycles.isEmpty()) {
+            for (long[] c : zgcCycles) {
+                reclaimedMb += Math.max(0, c[1] - c[2]);
+                youngCount++;
+                if (c[0] >= 0) {
+                    if (firstUp < 0) firstUp = c[0];
+                    lastUp = c[0];
+                }
             }
+            map.put("basis", "ZGC 周期回收量（ZGC 没有 Young GC 的概念）");
+        } else {
+            for (Pause p : pauses) {
+                if (!"Young".equals(p.type) && !"Mixed".equals(p.type)) continue;
+                reclaimedMb += Math.max(0, p.beforeMb - p.afterMb);
+                youngCount++;
+                if (p.uptimeMs >= 0) {
+                    if (firstUp < 0) firstUp = p.uptimeMs;
+                    lastUp = p.uptimeMs;
+                }
+            }
+            map.put("basis", "sum(Young/Mixed GC 回收量) / 时间");
         }
+
         map.put("youngGcCount", youngCount);
         map.put("reclaimedMb", reclaimedMb);
         if (firstUp > 0 && lastUp > firstUp) {
@@ -234,7 +311,7 @@ public class GcLogController {
             map.put("mbPerSecond", round(reclaimedMb / seconds));
             map.put("youngIntervalMs", round((lastUp - firstUp) / (double) Math.max(1, youngCount)));
         }
-        map.put("caveat", "这是估算：靠 sum(Young GC 回收量)/时间 推出来的。"
+        map.put("caveat", "这是估算：靠 sum(回收量)/时间 推出来的。"
                 + "有大对象直接进老年代时会偏低，但判断量级够用");
         return map;
     }
@@ -249,8 +326,25 @@ public class GcLogController {
     private List<Map<String, Object>> diagnose(List<Pause> pauses,
                                                double totalPauseMs,
                                                long startUptimeMs,
-                                               long endUptimeMs) {
+                                               long endUptimeMs,
+                                               String collector) {
         List<Map<String, Object>> findings = new ArrayList<>();
+
+        // ZGC 先说清楚"为什么下面看不到 Young/Full 的规则命中" ——
+        // 否则使用者会以为解析漏了。ZGC 是并发收集器，压根没有 Young/Full 之分。
+        if ("zgc".equals(collector)) {
+            double zmax = 0, zsum = 0;
+            for (Pause p : pauses) { zmax = Math.max(zmax, p.ms); zsum += p.ms; }
+            Map<String, Object> f = finding("info",
+                    "这是 ZGC 的日志：停顿只有三个阶段（Mark Start / Mark End / Relocate Start），"
+                            + "最大 " + round(zmax) + "ms、平均 " + round(zsum / pauses.size()) + "ms");
+            f.put("likely", "ZGC 的设计目标就是亚毫秒停顿，且停顿**不随堆大小增长** —— "
+                    + "因为它把标记、移动、重定位都做成了并发。代价是更高的 CPU 占用和更多的内存开销");
+            f.put("action", "所以下面「Full GC 频繁」「Young GC 太频繁」两条规则**不会命中** —— "
+                    + "ZGC 没有 Young/Full 之分，不是解析漏了。"
+                    + "要对比就换回 g1/parallel/serial 跑同一份负载，比 pauseHistogram 的尾部");
+            findings.add(f);
+        }
 
         int fullCount = 0;
         long fullReclaimedMb = 0;

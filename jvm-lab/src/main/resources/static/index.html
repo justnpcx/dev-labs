@@ -391,7 +391,8 @@
       <div class="hint" style="margin:0">
         点上面的按钮。想看明显一点的效果，先跑几个场景制造 GC：
         <code>./lab.sh trigger leak</code> 或 <code>./lab.sh trigger heap-slow</code>。<br>
-        想对比不同 GC，用 <code>./lab.sh restart g1 | parallel | serial</code> 换 profile 再跑同一份负载。
+        想对比不同 GC，用 <code>./lab.sh restart g1 | parallel | serial | zgc</code> 换 profile 再跑同一份负载。
+        ZGC 的日志格式完全不同（没有堆用量字段），解析器单独适配过。
       </div>
     </div>
   </section>

@@ -533,7 +533,9 @@ do_trigger() {
   解读类（读证据、做决策 —— 其他场景都是制造问题）
     gc-summary   解读 GC 日志    → 停顿统计 / 分布 / 分配速率 / 规则诊断
                  ★ 先跑几个场景制造 GC：./lab.sh trigger leak 或 heap-slow
-                 ★ 想对比不同 GC：./lab.sh restart g1 | parallel | serial
+                 ★ 想对比不同 GC：./lab.sh restart g1 | parallel | serial | zgc
+                   （ZGC 的日志格式完全不同，解析器单独适配过：
+                     一条周期 = 3 个阶段停顿，会另外给出 cycleCount）
                    换 profile 再跑同一份负载，然后回到这个命令对比
 
   工具

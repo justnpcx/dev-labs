@@ -165,7 +165,32 @@ curl -s localhost:8081/gc/summary | python3 -m json.tool | less
 # 换 GC 跑同一份负载，对比同一组数字
 ./lab.sh restart parallel && ./lab.sh trigger heap-slow && curl -s localhost:8081/gc/summary
 ./lab.sh restart g1       && ./lab.sh trigger heap-slow && curl -s localhost:8081/gc/summary
+./lab.sh restart zgc      && ./lab.sh trigger heap-slow && curl -s localhost:8081/gc/summary
 ```
+
+**ZGC 的日志格式和另外三个完全不同**，解析器单独适配过：
+
+| | G1 / Parallel / Serial | ZGC |
+|---|---|---|
+| 停顿行 | `Pause Young (Normal) 24M->3M(256M) 12.3ms` | `Pause Mark Start 0.007ms`（**没有堆用量**） |
+| 一次 GC | 1 条停顿 | **3 条**阶段停顿（Mark Start / Mark End / Relocate Start） |
+| 类型 | Young / Full / Mixed | 只有那三个阶段 |
+| 次数字段 | `gcCount` | `gcCount`（阶段）+ **`cycleCount`（周期）** |
+
+实测同一份负载（256M 堆，ZGC profile）：
+
+```
+gcCount 24（阶段）  cycleCount 8（周期）  ← 正好 3 倍
+总停顿 0.36ms   平均 0.01ms   最大 0.03ms
+byType {Mark Start: 8, Mark End: 8, Relocate Start: 8}
+```
+
+**这就是 ZGC 卖的东西**：亚毫秒停顿，而且**停顿不随堆变大而变长**
+（标记/移动/重定位全做成并发了）。代价是更高的 CPU 占用和内存开销。
+
+注意 ZGC 下「Full GC 频繁」「Young GC 太频繁」两条规则**不会命中** ——
+它压根没有 Young/Full 之分。诊断输出里会明确说这一点，
+免得你以为解析漏了。
 
 **它会给出什么**：
 
