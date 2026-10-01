@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第三方脚本 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+<script>
+/* 第三方脚本放在**兄弟源**上 —— 同机不同 host = 不同 origin。
+   这样 DevTools 的 Performance 面板才会把它们归到 "Third parties" 分组里。
+   （公网访问时兄弟源不存在，退回同源，现象一样只是少一个分组。） */
+window.__3P_HOST__ = (function () {
+  var isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (!isLocal) return location.host;
+  var twin = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  return twin + (location.port ? ':' + location.port : '');
+})();
+
+/* ★ 问题所在：document.write 出来的 script 是**同步阻塞**的 ——
+   HTML 解析器必须停下来，等它下载完、执行完，才能继续往下解析。
+   三个各烧 250ms 的脚本串起来，就是 750ms 的白屏。
+   真实的第三方埋点早期就是这么干的（Google Analytics 老版代码就是这个形态）。 */
+document.write('<script src="//' + window.__3P_HOST__ +
+               '/api/3p/tag.js?name=analytics&burn=250"><\/script>');
+document.write('<script src="//' + window.__3P_HOST__ +
+               '/api/3p/tag.js?name=chat-widget&burn=250"><\/script>');
+document.write('<script src="//' + window.__3P_HOST__ +
+               '/api/3p/tag.js?name=ab-test&burn=250"><\/script>');
+</script>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>三个第三方脚本堵在 head 里</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/thirdparty/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新 —— 会先看到一段<b>白屏</b>，然后内容才一起出现</li>
+      <li><b>Network</b> 面板看那三条 <code>/api/3p/tag.js</code>，它们是<b>串行</b>的</li>
+      <li>看它们的 <b>Initiator</b> 是 <code>document.write</code></li>
+      <li><b>Performance</b> 面板录一次，开启 <b>Third parties</b> 分组</li>
+      <li>看 Main 轨道：三段长任务<b>都属于第三方</b>，你一行代码都没写</li>
+      <li>看最下面「第三方总耗时」的数字</li>
+    </ol>
+    <div class="expect">
+      预期：三个脚本串行执行，共约 <b>750ms</b> 主线程占用<br>
+      而且它们<b>全都在首屏渲染之前</b> —— 用户看着白屏等它们跑完。
+    </div>
+    <div class="warn">
+      <b>最要命的地方：这些代码不归你管</b><br>
+      它们什么时候变慢、什么时候加了新逻辑、什么时候挂了 ——
+      你都不知道，也不会有 code review。<br><br>
+      但它们的成本<b>记在你的 Core Web Vitals 上</b>。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>Performance 面板的 Third parties 分组</b><br>
+      录制结果里有一栏能把各来源的 CPU 时间、请求数、传输字节分开统计。<br>
+      这是回答"我的页面为什么慢"最快的入口之一 ——
+      经常一开就发现大头全在几个你没想到的域名上。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="ssr-status">
+      <span class="st" id="stDom"><span class="dot"></span>DOM 开始解析</span>
+      <span class="st" id="stPaint"><span class="dot"></span>首屏可见</span>
+      <span class="st"><span class="dot" style="background:var(--red)"></span>
+        第三方总耗时 <b id="tpMs" style="color:var(--red)">0</b> ms</span>
+    </div>
+
+    <p class="hint" style="margin-bottom:10px">
+      下面这块内容本来应该立刻可见 —— 但它排在三个阻塞脚本后面。
+    </p>
+
+    <div class="panel" style="background:var(--panel2)">
+      <h3 style="margin-top:0">这是页面的主体内容</h3>
+      <p class="hint" style="margin:0">
+        如果你是在白屏之后才看到这行字，说明第三方脚本把首屏整个堵住了。
+      </p>
+    </div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题出在这三行</h3>
+    <pre class="logbox">// head 里，同步阻塞
+document.write('&lt;script src="//cdn.analytics.com/tag.js"&gt;&lt;/script&gt;');
+document.write('&lt;script src="//cdn.chat.com/widget.js"&gt;&lt;/script&gt;');
+document.write('&lt;script src="//cdn.abtest.com/sdk.js"&gt;&lt;/script&gt;');
+
+// 解析器必须：下载 → 执行 → 才能继续解析 HTML
+// 三个串起来 = 三个脚本的时间相加</pre>
+
+    <h3>第三方脚本的四种代价</h3>
+    <table>
+      <tr><th>代价</th><th>说明</th></tr>
+      <tr><td><b>阻塞解析</b></td><td>同步脚本让首屏白屏</td></tr>
+      <tr><td><b>占主线程</b></td><td>它们跑的时候你的事件、渲染都得排队</td></tr>
+      <tr><td><b>网络握手</b></td><td>不同域名要重新 DNS + TCP + TLS</td></tr>
+      <tr><td><b>不可控</b></td><td>对方改代码、挂了、变慢，你都只能被动接受</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      前三个你还能管，第四个是根本问题 ——
+      所以策略的重点是<b>「限制它们能造成多大伤害」</b>，而不是"让它们变快"。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const mark = (id) => document.getElementById(id).classList.add('on');
+
+onLoad(() => {
+  mark('stDom');
+  const list = window.__LAB_3P || [];
+  const total = list.reduce((s, x) => s + x.burnMs, 0);
+  document.getElementById('tpMs').textContent = total;
+
+  labLog(`第三方脚本执行记录（各自 performance.now() 时刻）：`);
+  list.forEach((x) => labLog(`  ${x.name.padEnd(12)} 在 ${x.at}ms 执行，烧了 ${x.burnMs}ms CPU`));
+  labLog(`共 ${list.length} 个，合计 ${total}ms —— 全部发生在 body 解析之前`);
+  labLog('');
+  labLog('所以首屏内容要等它们跑完才可能出现。对比优化版');
+
+  requestAnimationFrame(() => {
+    mark('stPaint');
+    labLog(`首屏可见时刻：约 ${Math.round(performance.now())}ms`);
+  });
+});
+</script>
+</body>
+</html>

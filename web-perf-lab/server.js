@@ -786,6 +786,43 @@ async function handleApi(req, res, url) {
                     { 'Cache-Control': 'no-store' });
   }
 
+  // 第三方脚本（模拟）。
+  //
+  // 为什么放在**兄弟源**上：DevTools 的 Performance 面板有个 "Third parties"
+  // 分组，只对**跨源**资源生效。同源路径下它不会分组，那个观察点就没了。
+  // 页面在 localhost 时这里会从 127.0.0.1 取（反之亦然），于是成了真正的第三方。
+  //
+  // 脚本内容刻意做两件事：
+  //   ① 同步烧掉 burn 毫秒 CPU —— 真实第三方脚本（埋点、客服、A/B）就是这么干的
+  //   ② 把自己的执行时刻记到 window.__LAB_3P，方便页面统计
+  if (p === '/api/3p/tag.js') {
+    const name = String(url.searchParams.get('name') || 'unknown').replace(/[^a-z0-9-]/gi, '');
+    const burn = Math.min(Number(url.searchParams.get('burn') || 250), 3000);
+    const fail = url.searchParams.get('fail') === '1';
+    if (fail) {
+      // 模拟第三方挂了。页面如果没做兜底，这一下就能把整个渲染拖住。
+      return send(res, 500, '// third-party is down', { 'Content-Type': MIME['.js'] });
+    }
+    return send(res, 200,
+      `/* 模拟第三方脚本：${name} */
+(function () {
+  var d = Date.now() + ${burn}, x = 0;
+  while (Date.now() < d) { x += Math.sqrt(x + 1); }   // ★ 同步烧 CPU
+  (window.__LAB_3P = window.__LAB_3P || []).push({
+    name: ${JSON.stringify(name)},
+    burnMs: ${burn},
+    at: Math.round(performance.now())
+  });
+})();`, {
+        'Content-Type': MIME['.js'],
+        'Cache-Control': 'no-store',
+        // 跨源脚本不需要 CORS（经典 script 标签不受同源策略限制），
+        // 但加上这个头能让 DevTools 的 initiator 信息更完整
+        'Access-Control-Allow-Origin': '*',
+        'X-Lab-Third-Party': name,
+      });
+  }
+
   send(res, 404, '未知 API');
 }
 

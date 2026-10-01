@@ -74,7 +74,7 @@
 <div class="hero">
   <h1>前端性能演练场</h1>
   <p>
-    24 个场景，每个都有 <b style="color:var(--red)">问题版</b> 和
+    25 个场景，每个都有 <b style="color:var(--red)">问题版</b> 和
     <b style="color:var(--green)">优化版</b> 两个独立页面。
     开两个标签页并排对比，在 Chrome DevTools 里看差别。<br>
     <b>按难度分四级，建议从初级顺着往上走。</b>
@@ -154,7 +154,7 @@
 
   <div class="group">
     <h2><span class="lvl lvl2">中级</span>
-      <span class="sub">学会用面板定位问题 · 9 个</span></h2>
+      <span class="sub">学会用面板定位问题 · 10 个</span></h2>
     <div class="scenarios">
       <div class="sc">
         <h3>慢 TTFB 与重定向链</h3>
@@ -178,6 +178,14 @@
         <div class="links">
           <a class="bad" href="/network/font/bad">问题版</a>
           <a class="good" href="/network/font/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>第三方脚本</h3>
+        <p>三个埋点/客服 SDK 同步堵在 head 里 → 白屏 900ms。看 Performance 的 Third parties 分组。</p>
+        <div class="links">
+          <a class="bad" href="/network/thirdparty/bad">问题版</a>
+          <a class="good" href="/network/thirdparty/good">优化版</a>
         </div>
       </div>
       <div class="sc">

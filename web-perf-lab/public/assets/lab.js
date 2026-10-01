@@ -137,6 +137,7 @@ const LAB_LEVELS = {
     'performance/listener', // 事件频率 vs 渲染帧率
     'performance/thrash',   // 强制同步布局
     'performance/longtask', // 长任务切分
+    'network/thirdparty',   // 第三方脚本：堵在 head vs 首屏后注入
     'ssr/csr',              // 白屏期：CSR vs 服务端直出
     'debug/override',       // 不改代码改线上 JS
     'debug/breakpoints',    // 断点全家桶

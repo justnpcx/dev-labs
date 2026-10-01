@@ -171,7 +171,7 @@ do_ui() {
 }
 
 do_routes() {
-  echo "24 个场景（问题版 / 优化版成对，可开两个标签页并排对比）。"
+  echo "25 个场景（问题版 / 优化版成对，可开两个标签页并排对比）。"
   echo "按难度分四级，建议从初级顺着往上走。"
   echo
   echo "── 初级 · 看懂浏览器怎么加载一个页面 ─────────────────────"
@@ -186,6 +186,7 @@ do_routes() {
   echo "  慢 TTFB 与重定向     $LAB_URL/network/ttfb/bad           vs  /good"
   echo "  资源优先级           $LAB_URL/network/priority/bad       vs  /good"
   echo "  字体加载             $LAB_URL/network/font/bad           vs  /good"
+  echo "  第三方脚本           $LAB_URL/network/thirdparty/bad     vs  /good"
   echo "  CSR vs SSR           $LAB_URL/ssr/csr/bad                vs  /good"
   echo "  未节流事件监听       $LAB_URL/performance/listener/bad   vs  /good"
   echo "  布局抖动             $LAB_URL/performance/thrash/bad     vs  /good"

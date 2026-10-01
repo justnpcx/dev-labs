@@ -1,6 +1,6 @@
 # web-perf-lab
 
-面向 **Chrome DevTools** 的实战演练场。24 个场景，按
+面向 **Chrome DevTools** 的实战演练场。25 个场景，按
 **初级 → 中级 → 高级 → 终极** 四级排列，每个都有**问题版 / 优化版**
 两个独立页面 —— 开两个标签页并排对比 Network 和 Performance 面板。
 
@@ -23,7 +23,7 @@
 
 ## 场景清单
 
-24 个场景按难度分四级。**建议从初级顺着往上走** ——
+25 个场景按难度分四级。**建议从初级顺着往上走** ——
 每一级都在用前一级的技能，跳着看容易变成"照着点一遍但没懂"。
 
 ### 初级 · 看懂浏览器怎么加载一个页面（6 个）
@@ -39,7 +39,7 @@
 | 渲染阻塞 JS | 同步 script 导致白屏；`defer` 只解决白屏不解决卡 |
 | 动画属性选择 | `left/top` vs `transform`；合成层与 `will-change` |
 
-### 中级 · 学会用面板定位问题（9 个）
+### 中级 · 学会用面板定位问题（10 个）
 
 要会用 Network 的 Timing、Performance 的火焰图，但因果链是单向的。
 
@@ -48,6 +48,8 @@
 | 慢 TTFB 与重定向链 | Timing 面板拆解；重定向为什么贵 |
 | 资源优先级 | `loading="lazy"` 用错地方；preload / fetchpriority / preconnect |
 | 字体加载 | 字体为什么"发现得晚"；FOIT vs FOUT；`font-display` 五个值 |
+| 第三方脚本 | 同步阻塞 vs 首屏后注入；preconnect；`onerror` 兜底；**只解决白屏不解决卡** |
+| 第三方脚本 | 同步阻塞 vs 首屏后注入；`preconnect`；`onerror` 兜底；**只解决白屏不解决卡** |
 | CSR vs SSR | 白屏期从哪来；HTML 是空壳还是有内容；FCP ≈ TTFB |
 | 未节流的事件监听 | scroll 触发次数远高于渲染帧；rAF 节流 |
 | 布局抖动 | 读写交替导致强制同步布局；批量读 → 批量写 |
@@ -174,7 +176,7 @@ html = html.replace('<!--SSR_PROPS-->', () => `window.__SSR_PROPS__ = ${JSON.str
 `Date.now()`），就会 hydration mismatch。
 ### 难度分级是怎么实现的
 
-24 个场景分四级，但**等级没有写进任何场景页** ——
+25 个场景分四级，但**等级没有写进任何场景页** ——
 `assets/lab.js` 里有一张 `LAB_LEVELS` 表，页面加载时按 `location.pathname`
 查出等级，自动往页头插一个彩色徽章。
 

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第三方脚本 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+<script>
+  window.__3P_HOST__ = (function () {
+    var isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if (!isLocal) return location.host;
+    var twin = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    return twin + (location.port ? ':' + location.port : '');
+  })();
+  // ★ ① 提前握手。第三方域名要重新走 DNS + TCP + TLS，
+  //    三个 RTT 加起来在弱网下能到几百毫秒。preconnect 让浏览器提前做完。
+  document.write('<link rel="preconnect" href="//' + window.__3P_HOST__ + '" crossorigin>');
+</script>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>首屏之后再加载</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/network/thirdparty/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新 —— 内容<b>立刻就在</b>，没有白屏</li>
+      <li><b>Network</b> 面板：三个 <code>/api/3p/tag.js</code> 出现在<b>文档之后</b></li>
+      <li>看它们是不是<b>并行</b>下载的（不是串行）</li>
+      <li>看 <code>preconnect</code> 的握手有没有提前发生（Connection 列）</li>
+      <li><b>Console</b> 里会有一条第三方挂掉的提示 —— 但页面<b>完全不受影响</b></li>
+      <li>看「第三方总耗时」：数字<b>没变</b>，但首屏可见时间提前了很多</li>
+    </ol>
+    <div class="expect">
+      预期：首屏 <b>约 90ms 可见</b>（问题版是 890ms 之后）<br>
+      三个主要脚本的总 CPU 时间<b>一样是 750ms</b> —— 只是挪到了首屏之后。<br>
+      第四个脚本会返回 500，用来演示 <code>onerror</code> 兜底。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>⚠ 关键认知：这只解决了"白屏"，没解决"卡"</b><br>
+      主线程该占还是占，只是从"渲染前"挪到了"渲染后"。<br>
+      如果你在第三方跑的时候点按钮，照样会卡 —— 那属于 INP 问题。<br><br>
+      要<b>真正</b>降低主线程占用，只有两条路：
+      <b>少加载</b>（砍掉不用的），或者<b>隔离</b>（塞进 iframe / Worker）。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="ssr-status">
+      <span class="st" id="stDom"><span class="dot"></span>DOM 开始解析</span>
+      <span class="st" id="stPaint"><span class="dot"></span>首屏可见</span>
+      <span class="st" id="stInjected"><span class="dot"></span>第三方已注入</span>
+      <span class="st"><span class="dot" style="background:var(--red)"></span>
+        第三方总耗时 <b id="tpMs" style="color:var(--red)">0</b> ms</span>
+    </div>
+
+    <p class="hint" style="margin-bottom:10px">
+      下面这块内容应该<b>立刻</b>就能看到，不用等第三方。
+    </p>
+
+    <div class="panel" style="background:var(--panel2)">
+      <h3 style="margin-top:0">这是页面的主体内容</h3>
+      <p class="hint" style="margin:0">
+        它现在就可见了 —— 第三方脚本还在后面排队。
+      </p>
+    </div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动：从"堵在 head"变成"首屏后注入"</h3>
+    <pre class="logbox">// ① head 里只留一个 preconnect，不加载任何第三方代码
+&lt;link rel="preconnect" href="//cdn.analytics.com" crossorigin&gt;
+
+// ② 首屏渲染完之后，再动态注入
+function loadThirdParties() {
+  ['analytics', 'chat-widget', 'ab-test'].forEach((name) =&gt; {
+    const s = document.createElement('script');
+    s.src = `//cdn.../${name}.js`;
+    // ★ 动态插入的 script 默认就是 async —— 并行下载，不阻塞解析
+    // ③ 兜底：第三方挂了不能让页面跟着挂
+    s.onerror = () =&gt; console.warn(`[3P] ${name} 加载失败，已忽略`);
+    document.head.appendChild(s);
+  });
+}
+// 等首屏画完再注入
+requestAnimationFrame(() =&gt; requestAnimationFrame(loadThirdParties));</pre>
+
+    <h3>五个可用的手段</h3>
+    <table>
+      <tr><th>手段</th><th>解决什么</th></tr>
+      <tr><td><code>preconnect</code></td><td>握手开销（DNS + TCP + TLS）</td></tr>
+      <tr><td>动态注入 / <code>defer</code></td><td>阻塞解析 → 不阻塞</td></tr>
+      <tr><td>首屏后 / 交互后加载</td><td>不跟首屏抢主线程</td></tr>
+      <tr><td><code>onerror</code> 兜底</td><td>第三方挂了不拖垮页面</td></tr>
+      <tr><td>iframe / Worker 隔离</td><td><b>真正</b>把主线程占用隔离出去</td></tr>
+    </table>
+
+    <div class="warn">
+      <b>治本的办法是"少加载"</b><br>
+      上线前对每个第三方问三个问题：<br>
+      ① 它带来了多少业务价值？② 能不能自研替代？
+      ③ 能不能只在需要它的页面/时机加载？<br><br>
+      很多团队盘点完会发现，页面上挂着的七八个 SDK 里，
+      真正在用的只有两三个 —— 剩下的纯粹是历史遗留。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script>
+const mark = (id) => document.getElementById(id).classList.add('on');
+
+onLoad(() => {
+  mark('stDom');
+  requestAnimationFrame(() => {
+    mark('stPaint');
+    labLog(`首屏可见时刻：约 ${Math.round(performance.now())}ms —— 第三方一个都还没加载`);
+
+    requestAnimationFrame(() => {
+      const host = window.__3P_HOST__;
+      // 前三个和问题版**完全一样**，保证对比公平。
+      // 第四个是额外加进来演示 onerror 的 —— 它故意返回 500。
+      const specs = [
+        { name: 'analytics',   burn: 250 },
+        { name: 'chat-widget', burn: 250 },
+        { name: 'ab-test',     burn: 250 },
+        { name: 'payment-sdk', burn: 250, fail: true },   // ← 这个会挂
+      ];
+      labLog(`开始注入 ${specs.length} 个第三方脚本（并行下载，不阻塞解析）`);
+      mark('stInjected');
+
+      specs.forEach((s) => {
+        const el = document.createElement('script');
+        el.src = `//${host}/api/3p/tag.js?name=${s.name}&burn=${s.burn}${s.fail ? '&fail=1' : ''}`;
+        el.onerror = () => {
+          labLog(`⚠ ${s.name} 加载失败（HTTP 500）—— onerror 兜住了，页面不受影响`);
+          console.warn(`[LAB] 第三方脚本 ${s.name} 加载失败，已忽略。` +
+                       '这就是 onerror 兜底的意义：第三方挂了不能拖垮主站。');
+        };
+        document.head.appendChild(el);
+      });
+
+      // 统计
+      setTimeout(() => {
+        const list = window.__LAB_3P || [];
+        const total = list.reduce((x, y) => x + y.burnMs, 0);
+        document.getElementById('tpMs').textContent = total;
+        labLog('');
+        labLog('第三方执行记录：');
+        list.forEach((x) => labLog(`  ${x.name.padEnd(12)} 在 ${x.at}ms 执行，烧了 ${x.burnMs}ms CPU`));
+        labLog(`前三个合计 ${total}ms —— 和问题版**一样**，但全部发生在首屏之后`);
+        labLog('第四个（payment-sdk）挂了，被 onerror 兜住 —— 页面完全不受影响');
+        labLog('');
+        labLog('所以首屏不卡了，可是这 750ms 里点按钮还是会卡（那是 INP 问题）');
+      }, 1200);
+    });
+  });
+});
+</script>
+</body>
+</html>
