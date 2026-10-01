@@ -49,6 +49,9 @@ public class StatusController {
         // 但同样是"不清掉就会一直占资源"的东西，一起收掉。
         int droppedPoolTasks = PoolController.shutdownAll();
         int stoppedContention = LockController.stopContentionThreads();
+        // 连接池也一样：泄漏的连接是"再也还不回来"的，只有重建池才能恢复。
+        // 真实环境里这一步等于重启应用 —— 所以页面上要明确说清。
+        int discardedConnections = ConnPoolController.resetPool();
 
         if (gc) {
             System.gc();
@@ -61,6 +64,7 @@ public class StatusController {
         result.put("stoppedSpinThreads", stoppedSpins);
         result.put("droppedPoolTasks", droppedPoolTasks);
         result.put("stoppedContentionThreads", stoppedContention);
+        result.put("discardedLeakedConnections", discardedConnections);
         result.put("explicitGc", gc);
         result.put("note", "死锁线程无法通过复位解除；Metaspace 的回落要等 Full GC 跑完，稍等再看 /status");
         result.put("heap", JvmStats.heap());

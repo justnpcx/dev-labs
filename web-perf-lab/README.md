@@ -78,7 +78,7 @@
 | 内存泄漏 | Detached DOM；**Retainers** 面板定位引用链 |
 | Lighthouse 综合评分 | **整合测试** —— 一次踩满四类审计，看前面学的东西怎么互相影响 |
 
-前面 20 个场景各练**一个**技术点，Lighthouse 是**综合评分**：
+前面 25 个场景各练**一个**技术点，Lighthouse 是**综合评分**：
 它把几十项审计加权算成 Performance / Accessibility / Best Practices / SEO
 四个分数，正好用来验证你是不是真的把前面那些点串起来了。
 

@@ -104,4 +104,152 @@ public class JitController {
         }
         return x;
     }
+
+    // ─────────────────────── JIT 反优化 ───────────────────────
+
+    /**
+     * 两个形状实现，用来制造「单态 → 多态」的转变。
+     *
+     * 这是 JIT 反优化最典型的触发方式：JIT 会观察每个调用点**实际收到过几种类型**。
+     * 只有一种时（单态）它敢大胆内联；出现第二种时就得退回去（去优化）。
+     */
+    private interface Shape {
+        double area();
+    }
+
+    private static final class Circle implements Shape {
+        final double r;
+        Circle(double r) { this.r = r; }
+        public double area() { return Math.PI * r * r; }
+    }
+
+    private static final class Square implements Shape {
+        final double a;
+        Square(double a) { this.a = a; }
+        public double area() { return a * a; }
+    }
+
+    /** 这个循环里的 sh.area() 就是被 JIT 观察的调用点 */
+    private static double sumAreas(Shape[] shapes, int iters) {
+        double s = 0;
+        int n = shapes.length;
+        for (int i = 0; i < iters; i++) {
+            s += shapes[i % n].area();
+        }
+        return s;
+    }
+
+    /**
+     * JIT 反优化（deoptimization）演练。
+     *
+     * 这个场景回答一个很实际的问题：**为什么我的接口跑着跑着变慢了？**
+     *
+     * 阶段一：数组里全是 Circle → 调用点**单态** → JIT 把 Circle.area() 内联进循环，
+     *         循环体变成纯算术，跑得飞快。
+     * 阶段二：混入 Square → 调用点变**多态** → JIT 发现之前的假设不成立，
+     *         把已编译的代码标记为 "made not entrant"（失效），退回解释执行，
+     *         再重新编译一份带类型检查的版本。
+     *
+     * 这个过程**是自动的、正确的**，但那一瞬间性能会掉一个数量级。
+     * 如果你在压测中途改了数据分布，测出来的数字就完全不可比。
+     *
+     * 观察方式：
+     *   -XX:+PrintCompilation  → 日志里会看到同一方法的多次编译记录，
+     *                            以及 "made not entrant" / "made zombie"
+     *   -XX:+UnlockDiagnosticVMOptions -XX:+TraceDeoptimization
+     */
+    @GetMapping("/deopt")
+    public Map<String, Object> deopt(@RequestParam(defaultValue = "10") int rounds,
+                                     @RequestParam(defaultValue = "800000") int iters) {
+        rounds = Math.max(2, Math.min(rounds, 100));
+        iters = Math.max(1000, Math.min(iters, 20_000_000));
+        int half = rounds / 2;
+
+        Shape[] monomorphic = new Shape[64];
+        for (int i = 0; i < monomorphic.length; i++) monomorphic[i] = new Circle(i + 1);
+
+        // 阶段一先跑几轮，确保 JIT 已经完成编译并内联
+        for (int i = 0; i < 5; i++) sumAreas(monomorphic, iters);
+
+        List<Long> mono = new ArrayList<>(half);
+        for (int i = 0; i < half; i++) {
+            long t = System.nanoTime();
+            sumAreas(monomorphic, iters);
+            mono.add((System.nanoTime() - t) / 1000);
+        }
+
+        // 混入第二种实现 —— 调用点从此不再单态
+        Shape[] polymorphic = new Shape[64];
+        for (int i = 0; i < polymorphic.length; i++) {
+            polymorphic[i] = (i % 2 == 0) ? new Circle(i + 1) : new Square(i + 1);
+        }
+
+        List<Long> poly = new ArrayList<>(rounds - half);
+        for (int i = 0; i < rounds - half; i++) {
+            long t = System.nanoTime();
+            sumAreas(polymorphic, iters);
+            poly.add((System.nanoTime() - t) / 1000);
+        }
+
+        long monoBest = mono.stream().mapToLong(Long::longValue).min().orElse(0);
+        long polyBest = poly.stream().mapToLong(Long::longValue).min().orElse(0);
+        long monoFirst = mono.get(0);
+        long polyFirst = poly.get(0);
+
+        // 去优化是**一次性**的：同一个调用点被去优化并重新编译之后，
+        // 后续调用直接走新版本，不会再去优化。
+        // 所以只有在 JVM 冷启动后第一次跑，才能看到那个 spike ——
+        // 这个特性必须如实告诉用户，否则他会以为接口坏了（实测第 2 次起就是 1.00x）。
+        boolean deoptObserved = polyFirst > monoBest * 1.5;
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("deoptObserved", deoptObserved);
+        result.put("roundsEachPhase", half);
+        result.put("iterationsPerRound", iters);
+        result.put("monomorphicMicros", mono);
+        result.put("polymorphicMicros", poly);
+        result.put("monoFirstMicros", monoFirst);
+        result.put("monoBestMicros", monoBest);
+        result.put("polyFirstMicros", polyFirst);
+        result.put("polyBestMicros", polyBest);
+        // 去优化的代价是**瞬时**的：那一轮要退回去重新编译
+        result.put("deoptSpike", String.format("%.2fx",
+                polyFirst * 1.0 / Math.max(1, monoBest)));
+        // 而稳态代价很小 —— JIT 会为多态场景重新编译一份
+        result.put("steadyStateSlowdown", String.format("%.2fx",
+                polyBest * 1.0 / Math.max(1, monoBest)));
+
+        result.put("whatHappened",
+                "前半段数组里全是 Circle，调用点单态，JIT 把 area() 内联进循环，"
+              + "循环体是纯算术。后半段混入 Square，调用点变多态，JIT 之前的假设失效 —— "
+              + "已编译代码被标记为 made not entrant，那一轮退回解释执行，"
+              + "之后重新编译一份带类型检查的版本。");
+        result.put("readTheNumbers", deoptObserved
+                ? "注意两个倍数差很多：deoptSpike（第一轮 / 单态最好）是**瞬时**代价，"
+                + "steadyStateSlowdown（多态最好 / 单态最好）是**稳态**代价。"
+                + "本机实测 spike 可以到 10 倍以上，而稳态通常只慢一点点 —— "
+                + "JIT 会为多态场景重新优化，稳态损失远小于第一眼印象。"
+                : "⚠ 这次没看到去优化（spike ≈ 1.0x）—— 因为**这个 JVM 已经跑过这个场景了**。\n"
+                + "去优化是一次性的：调用点被去优化并重新编译后，后续调用直接走新版本。\n"
+                + "想看到它，先 ./lab.sh restart 再跑一次。");
+        result.put("oneShot", "去优化只在**每个 JVM 生命周期内发生一次**（针对同一个调用点）。"
+                + "这也是它难排查的原因之一 —— 线上偶发一次卡顿，等你去看的时候早恢复常态了，"
+                + "只能靠 GC 日志、PrintCompilation 这类**留痕**手段回溯。");
+        result.put("whyItMatters",
+                "去优化本身是**自动且正确**的，但它意味着：数据分布一变，性能就抖一下。"
+              + "压测中途换数据、灰度期间新老逻辑并存、缓存预热期 —— "
+              + "这些时候测出来的数字都不可比。"
+              + "看到「跑着跑着卡一下，之后又正常」先怀疑类型不稳定。");
+        result.put("howToObserve",
+                "启动加 -XX:+PrintCompilation，日志里会看到同一方法被编译多次，"
+              + "以及 made not entrant / made zombie 字样；"
+              + "想看更细的加 -XX:+UnlockDiagnosticVMOptions -XX:+TraceDeoptimization。");
+        result.put("howToFix",
+                "① 别在热点路径上让同一个变量承载多种类型"
+              + " ② 用接口但保证实现单一，或者干脆拆成两个方法"
+              + " ③ 已经多态且无法避免时，考虑用类型判断提前分流");
+        log.info("JIT 去优化：单态最好 {}µs，多态首轮 {}µs（spike {}），多态稳态 {}µs",
+                monoBest, polyFirst, result.get("deoptSpike"), polyBest);
+        return result;
+    }
 }

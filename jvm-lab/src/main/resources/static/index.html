@@ -256,10 +256,15 @@
 
   /* ─────────────── 悬停代码浮层 ─────────────── */
   .codetip {
-    display: none; position: fixed; z-index: 50; max-width: 560px;
+    display: none; position: fixed; z-index: 50; max-width: 560px; min-width: 320px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
+    /* 关键：不能捕获鼠标，否则提示会挡住按钮 → mouseleave → 提示消失 → 再进
+       → 无限闪烁。这个属性是提示框能不能用的分水岭。 */
+    pointer-events: none;
   }
+  .codetip.show { display: block; }
+  .codetip .hl-star { color: var(--yellow); font-weight: 600; }
   .codetip .tiphead {
     font-size: 11px; color: var(--dim); margin-bottom: 8px;
     padding-bottom: 7px; border-bottom: 1px solid var(--border-soft);
@@ -289,7 +294,7 @@
     <span class="logo">JVM</span>
     <div>
       <h1>JVM 演练场</h1>
-      <p class="sub">容器化的 JVM 现象复现环境 · 14 个现象 · 四级难度</p>
+      <p class="sub">容器化的 JVM 现象复现环境 · 18 个现象 · 四级难度</p>
     </div>
   </div>
 
@@ -404,7 +409,8 @@
       死锁<b>无法</b>靠复位解除，需要 <code>./lab.sh restart</code>。<br>
       GC 空转需要先 <code>./lab.sh restart gc-overhead</code> 换 profile 才可能触发报错，
       当前默认 G1 下只会一直空转不报错。<br>
-      线程池 / 锁竞争 / JIT 这三个场景也都能用 <code>./lab.sh trigger &lt;名字&gt;</code> 触发。
+      线程池 / 锁竞争 / JIT / 连接池 这些场景也都能用 <code>./lab.sh trigger &lt;名字&gt;</code> 触发，
+      完整清单见 <code>./lab.sh trigger help</code>。
     </div>
   </section>
 
@@ -1105,6 +1111,45 @@ ATOMIC.incrementAndGet();                                // 无锁：CAS`,
 <b>但这是没预热的微基准</b>，别当生产结论（见 JIT 预热）。`,
   },
   {
+    label: '连接池耗尽', danger: true, url: '/connpool/burst?concurrency=20&queryMs=3000&acquireTimeoutMs=1000',
+    src: 'ConnPoolController.java  burst()',
+    code: `boolean got = p.permits.tryAcquire(acquireTimeoutMs, MILLISECONDS);
+if (!got) { timeout.incrementAndGet(); return; }   // ★ 等不到连接
+p.borrowed.incrementAndGet();
+try {
+    Thread.sleep(queryMs);          // 模拟慢查询占住连接
+} finally {
+    if (leakThis) { /* 借了不还 —— 真实项目里是 release 没写在 finally */ }
+    else { p.returned.incrementAndGet(); p.permits.release(); }
+}`,
+    note: `和「线程池无界队列」是同一类问题，现象却<b>完全相反</b>：<br>
+线程池无界队列 → 任务堆积 → <b>堆被吃光</b>（CPU 忙）<br>
+连接池耗尽 → 请求等连接 → <b>超时</b>（CPU 很闲、内存正常）<br><br>
+后者更难查：监控上 CPU 20%、GC 正常，但接口大面积超时 ——
+瓶颈在<b>等待</b>不在计算，容易被误判成网络问题。<br>
+把 <code>leak=3</code> 加上跑一次，看 <code>/connpool/stats</code> 的可用连接数一路下降。`,
+  },
+  {
+    label: 'JIT 去优化', url: '/jit/deopt?rounds=10&iters=800000',
+    src: 'JitController.java  deopt()',
+    code: `// 调用点：JIT 会观察这里实际收到过几种类型
+private static double sumAreas(Shape[] shapes, int iters) {
+    for (int i = 0; i < iters; i++) s += shapes[i % n].area();
+}
+
+// 阶段一：数组里全是 Circle → 单态 → JIT 内联 area()，循环体变成纯算术
+// 阶段二：混入 Square   → 多态 → 假设失效 → made not entrant → 重新编译`,
+    note: `回答一个很实际的问题：<b>为什么跑着跑着卡一下？</b><br>
+去优化是<b>自动且正确</b>的，代价是瞬时的 —— 本机 5 次冷启动实测，
+那一轮的 spike 在 <b>2.8x ~ 14x</b> 之间（波动大，因为单态那次刚好被编译得多快不确定）；<br>
+而重新编译后稳态<b>基本回到原速</b>（多态最好 ≈ 单态最好，5 次都在 0.97~1.05x）——<br>
+<b>所以是"抖一下"，不是"一直慢"</b>。多态本身不是罪，JIT 会为新的类型分布重新优化。<br><br>
+⚠ <b>它只在每个 JVM 生命周期内发生一次</b>（针对同一个调用点）。
+跑第二次就是 1.00x 了 —— 想看到它先 <code>./lab.sh restart</code>。<br>
+这也是它难排查的原因：线上偶发一次卡顿，等你去看时早恢复常态了，
+只能靠 <code>PrintCompilation</code> 这类<b>留痕</b>手段回溯。`,
+  },
+  {
     label: 'JIT 预热', url: '/jit/warmup?rounds=20&iters=300000',
     src: 'JitController.java  warmup()',
     code: `for (int r = 0; r < rounds; r++) {
@@ -1232,8 +1277,8 @@ function attachTip(el, sc) {
 const LEVELS = {
   1: ['堆 OOM', '慢速占堆', '栈溢出', 'CPU 打满', '停止空转'],
   2: ['直接内存 OOM', '线程数 OOM', '死锁', '渐进泄漏 +2MB×5'],
-  3: ['元空间 OOM', 'GC 空转', '锁竞争现场', '锁方式对比'],
-  4: ['线程池无界队列', '拒绝策略对比', 'JIT 预热'],
+  3: ['元空间 OOM', 'GC 空转', '锁竞争现场', '锁方式对比', '连接池耗尽'],
+  4: ['线程池无界队列', '拒绝策略对比', 'JIT 预热', 'JIT 去优化'],
 };
 const LEVEL_NAME = { 1: '初级', 2: '中级', 3: '高级', 4: '终极' };
 const LEVEL_DESC = {

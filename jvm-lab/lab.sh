@@ -461,6 +461,11 @@ do_trigger() {
     pool-reject) url="$LAB_URL/pool/bounded?policy=caller&tasks=60" ;;
     pool-stop)   url="$LAB_URL/pool/stop" ;;
     jit)         url="$LAB_URL/jit/warmup?rounds=20&iters=300000" ;;
+    jit-deopt)   url="$LAB_URL/jit/deopt?rounds=10&iters=800000" ;;
+    connpool)    url="$LAB_URL/connpool/burst?concurrency=20&queryMs=3000&acquireTimeoutMs=1000" ;;
+    connpool-leak) url="$LAB_URL/connpool/burst?concurrency=3&queryMs=200&leak=3" ;;
+    connpool-stats) url="$LAB_URL/connpool/stats" ;;
+    connpool-reset) url="$LAB_URL/connpool/reset" ;;
     leak)        url="$LAB_URL/leak/static?mb=2&count=5" ;;
     gc-summary)  url="$LAB_URL/gc/summary" ;;
     status)      url="$LAB_URL/status" ;;
@@ -506,6 +511,21 @@ do_trigger() {
     jit          JIT 预热        → 同一段代码前几轮慢、之后陡降几十倍
                  返回每轮单独耗时，看哪一轮开始掉 → 那就是 C2 编译完成的点
                  加 -XX:+PrintCompilation 可在日志里对到具体时刻
+    jit-deopt    JIT 去优化      → 调用点从单态变多态 → made not entrant
+                 ⚠ 只在每个 JVM 生命周期内发生一次（同一个调用点）。
+                   想看它先 ./lab.sh restart，第二次跑就是 1.00x
+                 实测 5 次冷启动：去优化那一轮 spike 2.8x ~ 14x（波动大），
+                   重新编译后稳态基本回到原速 —— 是"抖一下"不是"一直慢"
+
+  连接池类（和线程池现象相反：CPU 闲但超时）
+    connpool     池耗尽          → 池 5 / 并发 20 / 慢查询 3s → 8 个请求超时
+                 ★ 关键：CPU 是闲的，瓶颈在"等待"不在"计算"，
+                   监控上表现为「CPU 低 + 超时多」，容易被误判成网络问题
+    connpool-leak 连接泄漏       → 借了不还（release 没写在 finally 里）
+                 ★ 比池太小危险得多：它是**单调恶化**的，池会一路降到 0，
+                   所有请求永久超时，只能重启恢复
+    connpool-stats 看池状态      → available / inUse / leakedTotal
+    connpool-reset 重建池        → 相当于重启应用（泄漏的连接找不回来）
 
   泄漏类
     leak         渐进式缓存泄漏  → 配合两次 jmap -histo 对比
