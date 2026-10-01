@@ -65,13 +65,19 @@ profile_opts() {
     #                压到 4MB 后，每次最多回收 4/256 ≈ 1.6% < 2% ✓
     #   配合老年代被存活集占满 → 频繁 GC 且回收极少 → 命中判定
     gc-overhead) gc="-XX:+UseSerialGC -Xmn4m" ;;
+    # 专为「本地内存泄漏」调的：NMT 从 summary 提到 detail（级别由 write_env 注入）。
+    #   ★ 这个级别**只能在启动时指定**，事后改不了 —— 这正是本场景要教的点之一：
+    #     summary 只按类别汇总（多半只看到 "Other" 涨），
+    #     detail 才会给出调用栈，你才知道"是谁分配的"。
+    #   代价：detail 本身有内存和性能开销（约 5~10%），生产上不要长期开着。
+    nmt-detail) limits="-Xms256m -Xmx256m -XX:MaxDirectMemorySize=64m -XX:MaxMetaspaceSize=128m -Xss512k" ;;
     # 对照组：2G 堆。容器 mem_limit 是 2g，所以这个 profile 必须配合
     # 调大 mem_limit 才能用 —— 见下方 do_start 里的检查
     bigheap)  limits="-Xms2g -Xmx2g -Xss1m"; gc="-XX:+UseG1GC" ;;
     nolimit)  limits="-Xms256m -Xmx256m"; gc="" ;;
     *)
       echo "未知 profile：$profile" >&2
-      echo "可选：default g1 parallel serial zgc gc-overhead bigheap nolimit" >&2
+      echo "可选：default g1 parallel serial zgc gc-overhead nmt-detail bigheap nolimit" >&2
       exit 1
       ;;
   esac
@@ -89,6 +95,9 @@ serial     default + Serial GC，单线程 GC，最容易读懂日志
 zgc        default + ZGC（JDK17 需 UnlockExperimentalVMOptions），看亚毫秒暂停
 gc-overhead ★ 专为复现 GC overhead limit exceeded 调的：Serial GC + -Xmn4m
            小 Young 区是关键 —— 否则每次 GC 回收比例远超 2%，永远触发不了
+nmt-detail ★ 专为「本地内存泄漏」调的：NMT 级别从 summary 提到 detail
+           只有 detail 才给调用栈；而它**只能在启动时指定**，事后改不了
+           代价是约 5~10% 的内存与性能开销，生产上别长期开
 bigheap    2G 堆，对照组：同样的泄漏在大堆下能撑多久（需同时调大 mem_limit）
 nolimit    只设 -Xmx，不设 Metaspace/直接内存上限，看 OOM 形态如何变化
 
@@ -100,16 +109,21 @@ EOF
 
 write_env() {
   local profile="$1"
-  local pair limits gc
+  local pair limits gc nmt="summary"
   pair="$(profile_opts "$profile")"
   limits="${pair%%|*}"
   gc="${pair##*|}"
+
+  # NMT 级别单独拎出来：它**只能在启动时指定**，而且 detail 有开销。
+  # 不能写死在 LAB_COMMON 里 —— 那样 profile 再传 detail 也会被后面的 summary 覆盖
+  # （HotSpot 同名参数后出现的生效），表现为"改了 profile 却没生效"。
+  [[ "$profile" == "nmt-detail" ]] && nmt="detail"
 
   cat > "$ENV_FILE" <<EOF
 # 由 ./lab.sh start <profile> 自动生成（profile=$profile），不要手改
 LAB_JVM_LIMITS=$limits
 LAB_GC=$gc
-LAB_COMMON=-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps -XX:NativeMemoryTracking=summary -Xlog:gc*:file=/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
+LAB_COMMON=-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps -XX:NativeMemoryTracking=$nmt -Xlog:gc*:file=/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
 EOF
 }
 
@@ -466,6 +480,11 @@ do_trigger() {
     connpool-leak) url="$LAB_URL/connpool/burst?concurrency=3&queryMs=200&leak=3" ;;
     connpool-stats) url="$LAB_URL/connpool/stats" ;;
     connpool-reset) url="$LAB_URL/connpool/reset" ;;
+    native-leak) url="$LAB_URL/native/leak?mb=1400&chunkMb=64" ;;
+    native-soft) url="$LAB_URL/native/leak?mb=300&chunkMb=32" ;;
+    native-stats) url="$LAB_URL/native/stats" ;;
+    native-nmt)  url="$LAB_URL/native/nmt" ;;
+    native-free) url="$LAB_URL/native/free" ;;
     leak)        url="$LAB_URL/leak/static?mb=2&count=5" ;;
     gc-summary)  url="$LAB_URL/gc/summary" ;;
     status)      url="$LAB_URL/status" ;;
@@ -526,6 +545,24 @@ do_trigger() {
                    所有请求永久超时，只能重启恢复
     connpool-stats 看池状态      → available / inUse / leakedTotal
     connpool-reset 重建池        → 相当于重启应用（泄漏的连接找不回来）
+
+  本地内存类（唯一一个「日志直接断掉」的场景）
+    native-soft  温和泄漏        → 300MB。不打死容器，用来练观测手法
+                 ★ 关键动作：对比 heap / direct / rss 三个数字 ——
+                   前两个是 JVM 记账的，第三个是进程实际占的，
+                   对不上的部分就是本地内存
+    native-leak  打死容器        → 1400MB，灌到 cgroup 上限 → SIGKILL
+                 ⚠ 容器不会自动重启，演练完要 ./lab.sh start
+                 ★ 和 Java OOM 的区别：Java OOM 抛异常打堆栈，
+                   这个日志**戛然而止**，OutOfMemoryError 计数是 0
+                   事后证据只在容器外：docker inspect 的 OOMKilled、
+                   宿主 dmesg 的 "Memory cgroup out of memory"
+    native-stats 看快照          → heap / direct / 泄漏量 / RSS / cgroup
+    native-nmt   跑 NMT          → jcmd VM.native_memory summary 原始输出
+                 ★ summary 只给类别（Other 涨了），要调用栈得
+                   ./lab.sh restart nmt-detail —— 级别只能在启动时定
+    native-free  归还            → 模拟"修好代码后重启"。
+                   真实泄漏没这个按钮：指针早丢了
 
   泄漏类
     leak         渐进式缓存泄漏  → 配合两次 jmap -histo 对比

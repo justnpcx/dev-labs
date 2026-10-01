@@ -22,6 +22,7 @@ import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -67,6 +68,52 @@ public class FileController {
             Map<String, Object> err = new LinkedHashMap<>();
             err.put("error", "读取失败：" + e.getMessage());
             return ResponseEntity.internalServerError().body(err);
+        }
+    }
+
+    /**
+     * 清空一个文件，或整个目录。
+     *
+     * <p>两种用法二选一：
+     * <ul>
+     *   <li>{@code POST /files/clear?path=logs/gc.log} —— 清一个</li>
+     *   <li>{@code POST /files/clear?dir=logs|dumps|all} —— 清一类</li>
+     * </ul>
+     *
+     * <p>具体是"截断"还是"删除"由 {@link LabFiles#clear} 判断 ——
+     * 正在被 JVM / logback 持有的日志必须截断，删了会让写入方写进一个
+     * 看不见的 inode，空间不释放、面板永远空着。
+     */
+    @PostMapping("/clear")
+    public ResponseEntity<Map<String, Object>> clear(@RequestParam(required = false) String path,
+                                                     @RequestParam(required = false) String dir) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            if (dir != null && !dir.isBlank()) {
+                if (!List.of("logs", "dumps", "all").contains(dir)) {
+                    result.put("error", "dir 只允许 logs / dumps / all");
+                    return ResponseEntity.badRequest().body(result);
+                }
+                Map<String, Object> purged = LabFiles.purge(dir);
+                log.info("清空 {}：{} 个文件，释放 {} MB",
+                        dir, purged.get("clearedCount"), purged.get("freedMb"));
+                return ResponseEntity.ok(purged);
+            }
+            if (path == null || path.isBlank()) {
+                result.put("error", "要么给 path（清一个文件），要么给 dir（清一类）");
+                return ResponseEntity.badRequest().body(result);
+            }
+            Map<String, Object> cleared = LabFiles.clear(path);
+            log.info("清空 {}（{}），释放 {} 字节",
+                    path, cleared.get("how"), cleared.get("freedBytes"));
+            return ResponseEntity.ok(cleared);
+        } catch (IllegalArgumentException e) {
+            result.put("error", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        } catch (IOException e) {
+            log.warn("清空失败: {}", e.getMessage());
+            result.put("error", "清空失败：" + e.getMessage());
+            return ResponseEntity.internalServerError().body(result);
         }
     }
 

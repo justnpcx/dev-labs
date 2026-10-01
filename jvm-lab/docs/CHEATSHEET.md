@@ -143,6 +143,7 @@ GC 日志支持**自动刷新（2 秒）**，做 GC 对比实验时开着它，�
 | 连接池泄漏 | `trigger connpool-leak` | 可用连接数**单调下降**到 0 | 比池太小危险得多，只能重启恢复；见专节 2.9 |
 | JIT 预热 | `trigger jit` | 前几轮慢，某轮开始陡降几十倍 | 返回**每轮单独**耗时；陡降点 = C2 编译完成 |
 | JIT 去优化 | `trigger jit-deopt` | 一轮突然 spike 6~10 倍，之后回到原速 | ⚠ **每个 JVM 只发生一次**，先 `restart`；见专节 2.10 |
+| **本地内存泄漏** | `trigger native-soft` | 堆和直接内存**都不动**，只有 RSS 涨 | 唯一一个「日志直接断掉」的场景；见专节 2.11 |
 
 ### 解读类 —— 读证据、做决策
 
@@ -213,7 +214,37 @@ byType {Mark Start: 8, Mark End: 8, Relocate Start: 8}
 | 场景 | 触发命令 | 说明 |
 |---|---|---|
 | 看状态 | `trigger status` | JVM 全景快照 |
-| 复位 | `trigger reset` | 清空泄漏桶 + 关线程池 + 停锁竞争线程 + 停空转线程 |
+| 复位 | `trigger reset` | 清空泄漏桶 + 关线程池 + 停锁竞争线程 + 停空转线程 + 重建连接池 + 归还本地内存 |
+
+### 日志与快照的清理
+
+仪表盘的「日志与快照」面板支持清空：单个文件（选中后点「清空」）
+或一整类（「清空日志」/「清空快照」）。也可以直接调接口：
+
+```bash
+curl -X POST 'localhost:8081/files/clear?path=logs/gc.log'   # 清一个
+curl -X POST 'localhost:8081/files/clear?dir=logs'           # 清一类
+curl -X POST 'localhost:8081/files/clear?dir=dumps'
+```
+
+**关键设计：正在被写入的文件用「截断」而不是「删除」。**
+
+`logs/gc.log` 被 JVM 的 `-Xlog` 持有，`logs/app.log` 被 logback 持有。
+直接 `delete` 的话文件从目录里消失了，但**写入方的 fd 还指着那个 inode** ——
+它会继续往里写，只是你再也看不见了。后果：
+
+- 磁盘空间**一点没释放**（inode 被引用着）
+- 日志面板**永远空着**，直到重启才恢复
+
+所以规则是：**被持有 → truncate；没被持有 → delete**。
+堆快照（235MB）属于后者，删掉才真的把空间还回去。
+
+实测截断之后 JVM / logback 会**从偏移 0 重新写**，不会留下 NUL 空洞
+（这一点验证过 —— 早期担心过稀疏文件，实际是干净的）。
+
+怎么判断"被持有"：扫 `/proc/self/fd` 里的符号链接。
+比维护一份"哪些文件是活跃的"白名单靠谱 —— 白名单会在你改了 logback
+配置之后**悄悄失效**。
 
 ---
 
@@ -502,6 +533,124 @@ java -XX:+UnlockDiagnosticVMOptions -XX:+TraceDeoptimization -jar jvm-lab.jar
 
 **注意**：多态本身不是罪，JIT 为多态场景重新优化后性能是够用的。
 真正的问题是**切换的那一瞬间**，以及切换期间测出来的数字不可信。
+
+---
+
+## 2.11 专节：本地内存泄漏 —— 唯一一个「日志直接断掉」的场景
+
+这是全场唯一一个 **Java 堆完全正常，但进程被内核杀掉** 的现象。
+
+### 三道内存上限，一道都管不住它
+
+| 参数 | 管什么 | 管不管 Unsafe.allocateMemory |
+|---|---|---|
+| `-Xmx256m` | Java 堆 | ❌ |
+| `-XX:MaxDirectMemorySize=64m` | `ByteBuffer.allocateDirect` | ❌ |
+| `-XX:MaxMetaspaceSize=128m` | 类元数据 | ❌ |
+| **容器 `mem_limit`** | 整个进程的物理内存 | ✅ **只有它** |
+
+前三个是 **JVM 自己记账** 的，`Unsafe.allocateMemory` 是**裸 malloc**，
+JVM 根本不知道这块内存存在。所以现象不是 `OutOfMemoryError`，
+而是 **cgroup 先到上限 → 内核 SIGKILL**。
+
+### 实测
+
+```bash
+./lab.sh trigger native-soft      # 温和版，300MB，不打死容器
+```
+
+```
+heap    : 20 → 21 MB      ← 纹丝不动
+direct  :  0 MB           ← 纹丝不动
+rss     : 317 → 638 MB    ← +320MB
+cgroup  : 299 → 620 / 2048 MB
+```
+
+继续灌到 80% 之后：
+
+```
+./lab.sh trigger native-leak      # 1400MB，会打死容器
+→ 容器 Exited (137)，OOMKilled=true，且**不会自动重启**
+```
+
+### ★ 怎么和 Java OOM 区分开
+
+| | Java OOM | 本地内存泄漏 |
+|---|---|---|
+| 异常 | `OutOfMemoryError` + 完整堆栈 | **没有**（`grep OutOfMemoryError` 计数为 0）|
+| 日志 | 有完整的现场 | **戛然而止** |
+| 应用 | 还活着，能返回响应 | **已经死了，仪表盘打不开** |
+| 证据在哪 | 应用日志里 | **容器外面** |
+
+事后取证只能从外面来：
+
+```bash
+docker inspect jvm-lab --format 'OOMKilled={{.State.OOMKilled}}'   # true
+docker ps -a --filter name=jvm-lab                                  # Exited (137)
+dmesg -T | grep -i 'oom\|killed process'
+# Memory cgroup out of memory: Killed process 827761 (java)
+#   anon-rss:2091372kB  constraint=CONSTRAINT_MEMCG
+```
+
+`constraint=CONSTRAINT_MEMCG` 这行很关键 —— 它说明是**容器自己的限制**触发的，
+不是宿主内存不够。两者的处置方式完全不同。
+
+### 怎么定位（在出事之前）
+
+```bash
+./lab.sh trigger native-stats    # 对比 heap / direct / rss 三个数字
+./lab.sh trigger native-nmt      # jcmd VM.native_memory summary
+```
+
+**核心手法：三个数字对不上，差值就是本地内存。**
+前两个是 JVM 记账的，`rss` 是进程实际占的物理内存。
+
+NMT 会告诉你哪个**类别**在涨：
+
+```
+-  Other (reserved=327768KB, committed=327768KB)   ← 就是它
+```
+
+但 `summary` 级别**看不到调用栈**。要知道"是谁分配的"必须用 `detail`：
+
+```bash
+./lab.sh restart nmt-detail      # 级别只能在**启动时**指定，事后改不了
+./lab.sh trigger native-soft
+./lab.sh trigger native-nmt      # 这次输出里会有调用栈
+```
+
+**"级别只能在启动时定"本身就是一个值得记住的点** ——
+线上出了事才想起来开 detail，只能等下次重启。
+
+### 真实世界里它长什么样
+
+纯 Java 代码很少直接 `Unsafe.allocateMemory`。真实的本地内存泄漏来自
+**JNI 库在 native 代码里 malloc 了却忘了 free**：
+
+- Netty 的池化分配器（`-Dio.netty.maxDirectMemory` 相关的坑）
+- 压缩库（zstd / snappy 的 native 实现）
+- JDBC 驱动（尤其是老的 Oracle / DB2 驱动）
+- 各类加解密、图像处理的 native 实现
+
+表现都一样：**堆正常、GC 正常、CPU 正常，但 RSS 一直涨，最后被 OOM kill**。
+
+### 处理
+
+1. **先确认是不是本地内存** —— 三个数字对不上就是
+2. **定位到具体的库** —— NMT detail、`pmap`、`/proc/<pid>/smaps`
+3. **升级或替换那个库** —— 这类泄漏你改不了，只能等上游修
+4. **临时兜底** —— 限制那个库的缓存上限（大多数库都有配置项），
+   或者把有问题的功能拆到独立进程里
+
+**注意**：`-Xmx` 调小、换 GC、调 GC 参数 —— 这些**全都没用**。
+本地内存不归 JVM 管。
+
+### 演练场里的两个"作弊"之处
+
+- `trigger native-free` 能把它还回去 —— 真实泄漏**还不了**，指针早丢了。
+  这个接口的定位是"模拟修好代码后重启"，不是"有一个能救急的按钮"。
+- 用 `Unsafe.allocateMemory` 而不是真的 JNI —— 纯 Java 环境写不了 JNI，
+  但语义完全一致（拿了就还不了，JVM 不记账）。
 
 ---
 

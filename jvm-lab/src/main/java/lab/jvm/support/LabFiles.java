@@ -5,9 +5,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -186,6 +188,145 @@ public final class LabFiles {
     /** 生成一个新的、带时间戳的堆快照文件名（绝对路径）。 */
     public static String newHeapDumpPath() {
         return "/dumps/heap-" + System.currentTimeMillis() + ".hprof";
+    }
+
+    /**
+     * 清空一个文件。
+     *
+     * <h2>为什么不是无脑 delete</h2>
+     *
+     * 关键在于**这个文件是不是正被本进程持有**：
+     *
+     * <ul>
+     *   <li>{@code logs/gc.log} —— 被 JVM 的 {@code -Xlog} 持有</li>
+     *   <li>{@code logs/app.log} —— 被 logback 的 FileAppender 持有</li>
+     * </ul>
+     *
+     * 直接 {@code delete} 的话，文件从目录里消失了，但**写入方的 fd 还指着那个
+     * inode** —— 它会继续往里写，只是你再也看不见了。后果有两个：
+     * 磁盘空间一点没释放，而日志面板会一直空着（直到重启才恢复）。
+     * 这是"清空日志"这类功能最常见的坑。
+     *
+     * <p>所以：**被持有 → truncate（保留 inode）；没被持有 → delete**。
+     * 堆快照（235MB）就属于后者，删掉才真的把空间还回去。
+     *
+     * <p>怎么判断"被持有"：扫 {@code /proc/self/fd} 里的符号链接。
+     * 这是 Linux 上唯一可靠的判据，比维护一份"哪些文件是活跃的"白名单强 ——
+     * 白名单会在你改了 logback 配置之后悄悄失效。
+     */
+    public static Map<String, Object> clear(String relPath) throws IOException {
+        Path file = resolve(relPath);
+        long before = Files.size(file);
+        boolean held = isHeldOpen(file);
+
+        String how;
+        if (held) {
+            // 只截断、不删除。实测：截断后 JVM / logback 会从偏移 0 重新写，
+            // 不会留下 NUL 空洞（早期担心过稀疏文件，验证下来是干净的）
+            try (FileChannel ch = FileChannel.open(file, StandardOpenOption.WRITE)) {
+                ch.truncate(0);
+            }
+            how = "truncate";
+        } else {
+            Files.delete(file);
+            how = "delete";
+        }
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("path", relPath);
+        m.put("how", how);
+        m.put("freedBytes", before);
+        m.put("heldOpen", held);
+        m.put("explain", held
+                ? "文件正被本进程持有（JVM 的 -Xlog 或 logback），所以用「截断」而不是删除 —— "
+                  + "删了的话写入方会继续往那个看不见的 inode 里写，空间不释放、面板永远空着"
+                : "文件没有被任何进程持有，直接删除");
+        return m;
+    }
+
+    /**
+     * 清空整个目录（logs / dumps / all）。
+     *
+     * <p>逐个调用 {@link #clear}，所以每个文件各自走"持有就截断、否则删除"的逻辑。
+     * 单个失败不影响其他文件，失败原因会收集到 errors 里返回。
+     */
+    public static Map<String, Object> purge(String dir) {
+        List<Path> targets = new ArrayList<>();
+        for (Path root : ROOTS) {
+            if (!"all".equals(dir) && !root.getFileName().toString().equals(dir)) {
+                continue;
+            }
+            if (!Files.isDirectory(root)) {
+                continue;
+            }
+            try (Stream<Path> stream = Files.list(root)) {
+                stream.filter(Files::isRegularFile).forEach(targets::add);
+            } catch (IOException e) {
+                log.warn("列出 {} 失败: {}", root, e.getMessage());
+            }
+        }
+
+        List<Map<String, Object>> cleared = new ArrayList<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        long freed = 0;
+
+        for (Path p : targets) {
+            String rel = relativize(p);
+            try {
+                Map<String, Object> r = clear(rel);
+                cleared.add(r);
+                freed += ((Number) r.get("freedBytes")).longValue();
+            } catch (IOException | IllegalArgumentException e) {
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("path", rel);
+                err.put("error", e.getMessage());
+                errors.add(err);
+            }
+        }
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("dir", dir);
+        m.put("clearedCount", cleared.size());
+        m.put("freedBytes", freed);
+        m.put("freedMb", freed / 1024 / 1024);
+        m.put("cleared", cleared);
+        if (!errors.isEmpty()) {
+            m.put("errors", errors);
+        }
+        return m;
+    }
+
+    /**
+     * 这个文件现在是否被本进程打开着。
+     *
+     * <p>{@code /proc/self/fd} 下每个条目是一个指向被打开文件的符号链接，
+     * 读它的目标和我们解析出来的真实路径比一下就知道。
+     *
+     * <p>注意要比较 {@code toRealPath()} 之后的路径 —— 容器里 /logs 是挂载点，
+     * 未经解析的路径可能和 fd 指向的不是同一个字符串。
+     */
+    private static boolean isHeldOpen(Path file) {
+        Path real;
+        try {
+            real = file.toRealPath();
+        } catch (IOException e) {
+            return false;
+        }
+        Path fdDir = Path.of("/proc/self/fd");
+        if (!Files.isDirectory(fdDir)) {
+            return false;   // 非 Linux 环境，退化成"当作没被持有"
+        }
+        try (Stream<Path> fds = Files.list(fdDir)) {
+            return fds.anyMatch(fd -> {
+                try {
+                    return Files.readSymbolicLink(fd).equals(real);
+                } catch (IOException e) {
+                    return false;   // fd 可能在我们扫描的过程中被关掉了
+                }
+            });
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static boolean isText(String name) {

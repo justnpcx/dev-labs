@@ -294,7 +294,7 @@
     <span class="logo">JVM</span>
     <div>
       <h1>JVM 演练场</h1>
-      <p class="sub">容器化的 JVM 现象复现环境 · 18 个现象 · 四级难度</p>
+      <p class="sub">容器化的 JVM 现象复现环境 · 19 个现象 · 四级难度</p>
     </div>
   </div>
 
@@ -423,6 +423,8 @@
       <button onclick="captureThreadDump()">采集线程栈</button>
       <button onclick="makeDump(true)">生成堆快照（live）</button>
       <button onclick="makeDump(false)">生成堆快照（含垃圾）</button>
+      <button class="danger" onclick="purgeFiles('logs')">清空日志</button>
+      <button class="danger" onclick="purgeFiles('dumps')">清空快照</button>
       <label><input type="checkbox" id="autoRefresh" onchange="toggleAuto()"> 自动刷新（2 秒）</label>
       <span class="spacer"></span>
       <span class="hint" id="fileHint" style="margin:0"></span>
@@ -433,6 +435,7 @@
         <div class="filehead">
           <span class="fname" id="viewName">未选择文件</span>
           <span class="spacer"></span>
+          <button id="clearBtn" style="display:none" class="danger" onclick="clearCurrentFile()">清空</button>
           <button id="dlBtn" style="display:none" onclick="downloadCurrent()">下载</button>
         </div>
         <pre id="fileContent" class="logbox">点左侧文件查看内容。
@@ -445,7 +448,11 @@
       GC 日志文件是 <code>logs/gc.log</code>；OOM 时的堆快照自动落在 <code>dumps/</code>；
       应用日志 <code>logs/app.log</code> 里有完整的 OOM 堆栈。<br>
       <b>注意</b>：每次堆快照约 235MB，会自动写到宿主磁盘，记得定期
-      <code>./lab.sh clean</code>。
+      <code>./lab.sh clean</code>。<br>
+      <b>清空</b>：活跃日志（<code>gc.log</code> / <code>app.log</code>）会被<b>截断</b>而不是删除 ——
+      它们正被 JVM 的 <code>-Xlog</code> 和 logback 持有，删了的话写入方会继续往那个
+      「已经看不见的 inode」里写，空间不释放、面板永远空着。其余文件直接删除。
+      怎么判断"被持有"是扫 <code>/proc/self/fd</code>，不是维护一份白名单。
     </div>
   </section>
 
@@ -803,6 +810,7 @@ async function loadFiles() {
     lastFiles = files;
     if (!files.length) {
       box.innerHTML = '<div class="empty">还没有文件。<br>点「生成堆快照」，或先触发一次 OOM。</div>';
+      document.getElementById('fileHint').textContent = '0 个文件';
       return;
     }
     box.innerHTML = files.map(f =>
@@ -814,9 +822,88 @@ async function loadFiles() {
       (f.sizeBytes > 100 * 1024 * 1024 ? ' · <span style="color:var(--yellow)">超 100MB</span>' : '') +
       '</div></div>'
     ).join('');
-    document.getElementById('fileHint').textContent = files.length + ' 个文件';
+    const total = files.reduce((a, f) => a + f.sizeBytes, 0);
+    document.getElementById('fileHint').textContent =
+      files.length + ' 个文件 · 共 ' + humanSize(total);
   } catch (e) {
     box.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+/** 清空当前打开的文件。 */
+async function clearCurrentFile() {
+  if (!currentFile) return;
+  if (!confirm('清空 ' + currentFile + ' ？\n\n' +
+      '· 正在被 JVM / logback 写入的日志会被**截断**（保留文件，继续可写）\n' +
+      '· 其他文件（堆快照、线程栈）会被**删除**\n\n' +
+      '这个操作不可撤销。')) return;
+  await doClear('/files/clear?path=' + encodeURIComponent(currentFile));
+}
+
+/** 清空一整类：logs / dumps。 */
+async function purgeFiles(dir) {
+  const label = dir === 'logs' ? '日志' : '堆快照与线程栈';
+  if (!confirm('清空全部' + label + '？\n\n' +
+      '· 活跃日志（gc.log / app.log）会被截断，文件保留、继续可写\n' +
+      '· 其余文件会被删除，释放磁盘空间\n\n' +
+      '这个操作不可撤销。')) return;
+  await doClear('/files/clear?dir=' + dir);
+}
+
+async function doClear(url) {
+  const out = document.getElementById('out');
+  out.textContent = '正在清空…';
+  try {
+    const r = await fetch(url, { method: 'POST' });
+    const d = await r.json();
+    if (d.error) { out.textContent = '清空失败：' + d.error; return; }
+
+    if (d.dir) {
+      // 批量清空
+      const lines = [
+        '清空 ' + d.dir + '：' + d.clearedCount + ' 个文件，释放 ' + humanSize(d.freedBytes),
+        '',
+      ];
+      (d.cleared || []).forEach(c => lines.push(
+        '  ' + (c.how === 'truncate' ? '[截断] ' : '[删除] ') + c.path +
+        '  ' + humanSize(c.freedBytes)));
+      if (d.errors && d.errors.length) {
+        lines.push('', '失败 ' + d.errors.length + ' 个：');
+        d.errors.forEach(e => lines.push('  ' + e.path + ' — ' + e.error));
+      }
+      out.textContent = lines.join('\n');
+    } else {
+      // 单个文件
+      out.textContent = [
+        '已清空 ' + d.path,
+        '方式：' + (d.how === 'truncate' ? '截断（保留文件）' : '删除'),
+        '释放：' + humanSize(d.freedBytes),
+        '',
+        d.explain,
+        '',
+        d.heldOpen
+          ? '★ 注意：截断之后写入方（JVM 的 -Xlog / logback）会从偏移 0 继续写，\n' +
+            '  所以过一会儿这个文件就会重新长出内容 —— 那是新的日志，不是没清掉。'
+          : '',
+      ].filter(Boolean).join('\n');
+    }
+    await loadFiles();
+    // 重新加载列表后再决定怎么处理右侧内容区：
+    //   文件还在（被截断）→ 重新读一遍，显示空内容
+    //   文件被删了        → 清掉选择状态，别让右侧停在一个不存在的文件上
+    if (currentFile) {
+      if (lastFiles.some(f => f.path === currentFile)) {
+        await openFile(currentFile).catch(() => {});
+      } else {
+        currentFile = null;
+        document.getElementById('viewName').textContent = '未选择文件';
+        document.getElementById('dlBtn').style.display = 'none';
+        document.getElementById('clearBtn').style.display = 'none';
+        document.getElementById('fileContent').textContent = '（文件已被删除）';
+      }
+    }
+  } catch (e) {
+    out.textContent = '清空失败：' + e.message;
   }
 }
 
@@ -825,6 +912,7 @@ async function openFile(path) {
   document.querySelectorAll('.fileitem').forEach(el => el.classList.remove('active'));
   document.getElementById('viewName').textContent = path;
   document.getElementById('dlBtn').style.display = 'inline-block';
+  document.getElementById('clearBtn').style.display = 'inline-block';
 
   const pre = document.getElementById('fileContent');
 
@@ -1050,6 +1138,46 @@ private static final Map<String, LeakEntry> STATIC_CACHE
 // ★ 只有 put，没有 remove / 没有 TTL / 没有容量上限`,
     note: `这是<b>生产环境第一大泄漏类型</b>：缓存加了，淘汰策略忘了。
 用 LeakEntry 而不是 byte[]，是为了让 jmap -histo 里能一眼看到实例数在涨。`,
+  },
+  {
+    label: '本地内存泄漏', danger: true, url: '/native/leak?mb=1400&chunkMb=64',
+    src: 'NativeLeakController.java  leak()',
+    code: `long p = (Long) ALLOCATE_MEMORY.invoke(UNSAFE, chunkBytes);   // 裸 malloc
+SET_MEMORY.invoke(UNSAFE, p, chunkBytes, (byte) 0);          // 触碰，否则不占物理页
+LEAKED.add(p);                                               // ★ 只记不还
+
+// -Xmx256m                   只管 Java 堆
+// -XX:MaxDirectMemorySize    只管 ByteBuffer.allocateDirect
+// Unsafe.allocateMemory      ← 谁都不管`,
+    note: `全场<b>唯一一个「Java 堆完全正常，但进程被内核杀掉」</b>的场景。<br>
+实测：泄漏 320MB 后 —— 堆 <b>20→21MB</b>、直接内存 <b>0MB</b> 纹丝不动，
+RSS <b>+320MB</b>；继续灌到 cgroup 80% 时容器被 <code>SIGKILL</code>。<br><br>
+<b>★ 和 Java OOM 最本质的区别</b>：Java OOM 会抛异常、打堆栈；
+这个<b>日志直接断掉</b>，<code>OutOfMemoryError</code> 计数是 0 ——
+因为 JVM 根本不知道这块内存的存在。<br>
+唯一的事后证据在容器外面：<code>docker inspect</code> 的 OOMKilled、
+宿主 <code>dmesg</code> 里的 <code>Memory cgroup out of memory</code>。<br><br>
+⚠ <b>这个场景会把容器打死，且不会自动重启</b> —— 演练完要 <code>./lab.sh start</code>。
+不想打死就点下面那个「泄漏（温和版）」，或调小 <code>mb=</code>。`,
+  },
+  {
+    label: '本地内存·温和版', url: '/native/leak?mb=300&chunkMb=32',
+    src: 'NativeLeakController.java  nmt()',
+    code: `// 堆和直接内存都不动，只有 RSS 涨 —— 差值就是本地内存
+heap     : 20 MB
+direct   :  0 MB
+rss      : 638 MB   ← 差 320MB
+
+// NMT 的 summary 级别只能看到类别：
+-      Other (reserved=327768KB, committed=327768KB)   ← 就是它
+// 但"是谁分配的"要 detail 级别才给调用栈，
+// 而 detail 只能在**启动时**指定：./lab.sh restart nmt-detail`,
+    note: `不打死容器的版本，用来练观测手法。<br>
+关键动作：对比 <b>堆 / 直接内存 / RSS</b> 三个数字 ——
+前两个是 JVM 自己记账的，第三个是进程实际占的。<b>对不上的部分就是本地内存</b>。<br>
+然后用 <code>jcmd 1 VM.native_memory summary</code> 看是哪个类别在涨。<br><br>
+想看 NMT 的 detail 级别（能看到调用栈）：<code>./lab.sh restart nmt-detail</code> ——
+<b>级别只能在启动时定，事后改不了</b>，这本身就是个值得记住的点。`,
   },
   {
     label: '线程池无界队列', danger: true, url: '/pool/unbounded?tasks=4000&payloadKb=64',
@@ -1279,7 +1407,7 @@ const LEVELS = {
   1: ['堆 OOM', '慢速占堆', '栈溢出', 'CPU 打满', '停止空转'],
   2: ['直接内存 OOM', '线程数 OOM', '死锁', '渐进泄漏 +2MB×5'],
   3: ['元空间 OOM', 'GC 空转', '锁竞争现场', '锁方式对比', '连接池耗尽'],
-  4: ['线程池无界队列', '拒绝策略对比', 'JIT 预热', 'JIT 去优化'],
+  4: ['线程池无界队列', '拒绝策略对比', 'JIT 预热', 'JIT 去优化', '本地内存泄漏', '本地内存·温和版'],
 };
 const LEVEL_NAME = { 1: '初级', 2: '中级', 3: '高级', 4: '终极' };
 const LEVEL_DESC = {

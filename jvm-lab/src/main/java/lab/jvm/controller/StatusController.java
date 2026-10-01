@@ -52,6 +52,9 @@ public class StatusController {
         // 连接池也一样：泄漏的连接是"再也还不回来"的，只有重建池才能恢复。
         // 真实环境里这一步等于重启应用 —— 所以页面上要明确说清。
         int discardedConnections = ConnPoolController.resetPool();
+        // 本地内存泄漏：真实环境里根本还不了（指针早丢了），
+        // 这里能还只是因为演练场自己记着地址。
+        int freedNativeBlocks = NativeLeakController.releaseAll();
 
         if (gc) {
             System.gc();
@@ -65,6 +68,7 @@ public class StatusController {
         result.put("droppedPoolTasks", droppedPoolTasks);
         result.put("stoppedContentionThreads", stoppedContention);
         result.put("discardedLeakedConnections", discardedConnections);
+        result.put("freedNativeBlocks", freedNativeBlocks);
         result.put("explicitGc", gc);
         result.put("note", "死锁线程无法通过复位解除；Metaspace 的回落要等 Full GC 跑完，稍等再看 /status");
         result.put("heap", JvmStats.heap());
