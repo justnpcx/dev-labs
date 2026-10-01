@@ -176,6 +176,19 @@ code {
 @media (min-width: 900px) {
   .wrap.split { grid-template-columns: 320px 1fr; align-items: start; }
 }
+/* grid / flex 子项默认 min-width: auto —— 里面有个宽元素就会把轨道撑破，
+   内容直接越界到隔壁列。这是「内容跑到右边区域」这类问题的通用解法，
+   比一个个去调宽度靠谱得多。 */
+.wrap.split > * { min-width: 0; }
+
+/* <pre> 默认 white-space: pre：一行有多长就撑多宽。
+   观察清单只有 320px 宽，一条 curl 命令就能顶出去。统一允许换行。 */
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+/* .logbox 有自己的换行规则（break-all），优先级比元素选择器高，不受影响 */
 
 .card {
   background: var(--panel);
