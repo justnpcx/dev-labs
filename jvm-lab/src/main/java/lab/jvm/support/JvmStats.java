@@ -32,6 +32,7 @@ public final class JvmStats {
         root.put("directBuffer", directBuffer());
         root.put("threads", threads());
         root.put("gc", gc());
+        root.put("runtime", runtime());
         root.put("jvmArgs", jvmArgs());
         root.put("buckets", buckets());
         // 容器隔离边界 —— 界面上要能看到"限制到底生效了没有"
@@ -107,6 +108,23 @@ public final class JvmStats {
             list.add(map);
         }
         return list;
+    }
+
+    /**
+     * 运行时长与启动时刻。
+     *
+     * 演练场里「我到底 restart 了没有」是个高频问题 ——
+     * 改了 -Xmx、换了 GC profile 之后，看这个数字就知道新参数有没有真的生效。
+     * JIT 预热场景也需要一个时间参照（刚起来的 JVM 处处都是解释执行）。
+     */
+    public static Map<String, Object> runtime() {
+        RuntimeMXBean bean = ManagementFactory.getRuntimeMXBean();
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("uptimeMs", bean.getUptime());
+        map.put("startTimeMs", bean.getStartTime());
+        map.put("vmName", bean.getVmName());
+        map.put("pid", ProcessHandle.current().pid());
+        return map;
     }
 
     /**

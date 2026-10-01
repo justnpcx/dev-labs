@@ -294,7 +294,7 @@
   </div>
 
   <span class="pill" id="conn">连接中…</span>
-  <span class="pill" id="uptime"></span>
+  <span class="pill" id="uptime" title="JVM 运行时长">—</span>
   <span class="spacer"></span>
 
   <div class="theme-switch" role="group" aria-label="主题">
@@ -522,6 +522,19 @@ function setBar(id, p) {
   el.style.background = color(p);
 }
 
+/** 毫秒 → 「2天3小时」这种好读的形式。只保留两级单位，再多就没人看了。 */
+function fmtUptime(ms) {
+  if (ms === undefined || ms === null) return '—';
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + '天' + h + '小时';
+  if (h > 0) return h + '小时' + m + '分';
+  if (m > 0) return m + '分' + (s % 60) + '秒';
+  return s + '秒';
+}
+
 let alertDismissed = false;
 
 function render(d) {
@@ -552,13 +565,22 @@ function render(d) {
   hist.direct.push(db.usedMb || 0); if (hist.direct.length > MAXPTS) hist.direct.shift();
   drawChart('directChart', hist.direct, 64, '--green');
 
-  const th = d.threads;
-  document.getElementById('thCount').textContent = th.count;
+  const th = d.threads;  document.getElementById('thCount').textContent = th.count;
   document.getElementById('thPeak').textContent = th.peakCount;
   document.getElementById('thTotal').textContent = th.totalStarted;
   const deadEl = document.getElementById('thDead');
   deadEl.textContent = th.deadlockedCount;
   deadEl.style.color = th.deadlockedCount > 0 ? 'var(--red)' : '';
+
+  // 运行时长。演练场里「我到底 restart 了没有」是个高频问题 ——
+  // 改了 -Xmx 或换了 GC profile 之后，这个数字会归零就说明新参数生效了。
+  const rt = d.runtime || {};
+  const upEl = document.getElementById('uptime');
+  if (rt.uptimeMs !== undefined) {
+    upEl.textContent = '运行 ' + fmtUptime(rt.uptimeMs);
+    upEl.title = '启动于 ' + new Date(rt.startTimeMs).toLocaleString('zh-CN')
+               + '\nPID ' + rt.pid + ' · ' + rt.vmName;
+  }
 
   document.getElementById('gcList').innerHTML = d.gc.map(g =>
     '<div class="metric"><span class="k">' + g.name + '</span>' +
