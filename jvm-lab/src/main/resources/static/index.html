@@ -372,6 +372,25 @@
     </div>
   </section>
 
+  <!-- ── GC 日志解读 ── -->
+  <section class="panel">
+    <h2>GC 日志解读</h2>
+    <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <button onclick="analyzeGc()">分析 GC 日志</button>
+      <span class="hint" style="margin:0">
+        解析 <code>/logs/gc.log</code> 并做规则诊断 ——
+        这是演练场里唯一「读证据、做决策」的场景，其他都是「制造问题」
+      </span>
+    </div>
+    <div id="gcSummary">
+      <div class="hint" style="margin:0">
+        点上面的按钮。想看明显一点的效果，先跑几个场景制造 GC：
+        <code>./lab.sh trigger leak</code> 或 <code>./lab.sh trigger heap-slow</code>。<br>
+        想对比不同 GC，用 <code>./lab.sh restart g1 | parallel | serial</code> 换 profile 再跑同一份负载。
+      </div>
+    </div>
+  </section>
+
   <!-- ── 触发场景 ── -->
   <section class="panel">
     <h2>触发场景</h2>
@@ -520,6 +539,83 @@ function setBar(id, p) {
   const el = document.getElementById(id);
   el.style.width = Math.min(p, 100).toFixed(1) + '%';
   el.style.background = color(p);
+}
+
+/* ── GC 日志解读 ──
+ * 这是演练场里唯一"读证据、做决策"的面板：其他场景都是制造现象，
+ * 这个是把已有的 GC 日志解析成结论。真实调优工作就是长这样的。 */
+const GC_LEVEL_STYLE = {
+  warning: { color: 'var(--red)',    bg: 'var(--red-bg)',    icon: '⚠' },
+  info:    { color: 'var(--accent)', bg: 'var(--accent-bg)', icon: 'ℹ' },
+  ok:      { color: 'var(--green)',  bg: 'var(--green-bg)',  icon: '✓' },
+};
+
+async function analyzeGc() {
+  const box = document.getElementById('gcSummary');
+  box.innerHTML = '<div class="hint" style="margin:0">分析中…</div>';
+  let d;
+  try {
+    d = await (await fetch('/gc/summary')).json();
+  } catch (e) {
+    box.innerHTML = `<div class="hint" style="margin:0;color:var(--red)">请求失败：${e.message}</div>`;
+    return;
+  }
+
+  if (!d.overview) {
+    box.innerHTML = `<div class="hint" style="margin:0">${d.outcome || '没有数据'}<br>${d.hint || ''}</div>`;
+    return;
+  }
+
+  const o = d.overview, a = d.allocationRate || {};
+  const metric = (k, v) => `<div class="metric"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+
+  const hist = (d.pauseHistogram || []).map((x) => `
+    <div style="display:flex;align-items:center;gap:8px;margin:3px 0">
+      <span class="hint" style="width:78px;margin:0">${x.range}</span>
+      <span style="flex:1;height:7px;background:var(--panel2);border-radius:4px;overflow:hidden">
+        <i style="display:block;height:100%;width:${x.percent}%;background:${x.range.includes('500') ? 'var(--red)' : x.range.includes('100') ? 'var(--yellow)' : 'var(--green)'}"></i>
+      </span>
+      <span class="mono" style="width:76px;text-align:right">${x.count} 次 ${x.percent}%</span>
+    </div>`).join('');
+
+  const diag = (d.diagnosis || []).map((f) => {
+    const st = GC_LEVEL_STYLE[f.level] || GC_LEVEL_STYLE.info;
+    return `<div style="margin-top:9px;padding:9px 11px;border-radius:8px;
+                 background:${st.bg};border-left:3px solid ${st.color};font-size:12.5px">
+      <div style="color:${st.color};font-weight:600">${st.icon} ${f.what}</div>
+      ${f.likely ? `<div class="hint" style="margin:5px 0 0;color:var(--text)">→ ${f.likely}</div>` : ''}
+      ${f.action ? `<div class="hint" style="margin:4px 0 0">★ ${f.action}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="duo" style="gap:12px">
+      <div>
+        <div style="font-size:11.5px;color:var(--dim);margin-bottom:6px">总览（覆盖 ${o.spanSeconds || '?'}s）</div>
+        ${metric('GC 次数', o.gcCount)}
+        ${metric('总停顿', o.totalPauseMs + ' ms')}
+        ${metric('平均停顿', o.avgPauseMs + ' ms')}
+        ${metric('最大停顿', o.maxPauseMs + ' ms')}
+        ${metric('GC 时间占比', (o.pauseRatioPercent ?? '?') + ' %')}
+        ${metric('按类型', Object.entries(o.byType || {}).map(([k, v]) => `${k}×${v}`).join(' '))}
+        ${metric('分配速率（估）', (a.mbPerSecond ?? '?') + ' MB/s')}
+        ${metric('Young GC 间隔', (a.youngIntervalMs ?? '?') + ' ms')}
+      </div>
+      <div>
+        <div style="font-size:11.5px;color:var(--dim);margin-bottom:6px">停顿分布 —— 均值会骗人，看尾部</div>
+        ${hist}
+        <div class="hint" style="margin-top:10px">${a.caveat || ''}</div>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <div style="font-size:11.5px;color:var(--dim)">规则诊断（每条结论都能追溯到上面的数字）</div>
+      ${diag}
+    </div>
+    <div class="hint" style="margin-top:12px">
+      最长一次停顿：${o.maxPauseAt || '—'}<br>
+      日志：<code>${d.logFile}</code>（${d.logSizeKb} KB，扫了 ${d.linesScanned} 行）<br>
+      ${d.howToCompare || ''}
+    </div>`;
 }
 
 /** 毫秒 → 「2天3小时」这种好读的形式。只保留两级单位，再多就没人看了。 */

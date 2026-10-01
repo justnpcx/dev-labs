@@ -141,6 +141,45 @@ GC 日志支持**自动刷新（2 秒）**，做 GC 对比实验时开着它，�
 | 拒绝策略对比 | `trigger pool-reject` | 四种策略的 accepted / rejected 差异 | `discard` 丢 42 个任务却 2ms 返回；`caller` 是背压 |
 | JIT 预热 | `trigger jit` | 前几轮慢，某轮开始陡降几十倍 | 返回**每轮单独**耗时；陡降点 = C2 编译完成 |
 
+### 解读类 —— 读证据、做决策
+
+前面 14 个场景都是"制造问题"，只有这个是把**已有的日志**解析成结论。
+真实调优工作就长这样：拿到日志 → 读出瓶颈 → 调参 → 再跑一遍对比。
+
+| 场景 | 触发命令 | 说明 |
+|---|---|---|
+| GC 日志解读 | `trigger gc-summary` | 停顿统计 / 分布直方图 / 分配速率 / **规则诊断** |
+
+仪表盘上也有对应面板（「GC 日志解读」→ 分析按钮）。
+
+**怎么用出效果**：
+
+```bash
+./lab.sh trigger leak          # 先制造一些 GC
+./lab.sh trigger heap-slow
+curl -s localhost:8081/gc/summary | python3 -m json.tool | less
+
+# 换 GC 跑同一份负载，对比同一组数字
+./lab.sh restart parallel && ./lab.sh trigger heap-slow && curl -s localhost:8081/gc/summary
+./lab.sh restart g1       && ./lab.sh trigger heap-slow && curl -s localhost:8081/gc/summary
+```
+
+**它会给出什么**：
+
+- `overview`：GC 次数、总/平均/最大停顿、**GC 时间占比**（生产上超 5% 就该警惕）
+- `pauseHistogram`：停顿分布 —— 平均值会骗人，一次 800ms 的毛刺藏在
+  200 次 5ms 里，均值完全看不出来，必须看尾部
+- `allocationRate`：靠 `sum(Young GC 回收量)/时间` 估算的分配速率
+- `diagnosis`：**规则式诊断**，每条结论都标注了依据哪个数字、以及下一步该做什么
+
+诊断用的是可读规则而不是"AI 分析"，规则本身也写在源码里 ——
+不同意可以自己改。四条规则：
+
+1. Full GC 频繁 + 每次回收量 < 堆的 5% → 存活集过大或内存泄漏
+2. Young GC 间隔 < 200ms → 分配速率太高，或 Young 区太小
+3. 最大停顿 > 平均停顿 × 8 → 长尾毛刺，比"整体慢"糟糕得多
+4. GC 时间占比 > 5% → 大量 CPU 花在 GC 上而不是业务逻辑上
+
 ### 工具
 
 | 场景 | 触发命令 | 说明 |

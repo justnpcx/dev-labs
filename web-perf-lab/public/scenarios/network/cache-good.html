@@ -36,15 +36,26 @@
     <h2>DevTools 观察清单</h2>
     <ol>
       <li><b>Network</b> 面板，<b>不要</b>勾 Disable cache</li>
-      <li>点「请求 3 次」</li>
-      <li>强缓存那组：第 2、3 次 Status 应显示 <code>200 (from disk cache)</code> 或 <code>(memory cache)</code>，<b>Size 列是 0 B</b></li>
-      <li>协商缓存那组：第 2、3 次 Status 是 <code>304</code>，Size 只有几百字节</li>
+      <li>点「请求 3 次」，先看下面日志里的 <b>transferSize</b></li>
+      <li>强缓存那组：第 2、3 次 <b>transferSize=0</b> —— 请求根本没发出去</li>
+      <li>协商缓存那组：第 2、3 次 <b>transferSize≈300</b> —— 发了，但只传了响应头</li>
+      <li>回 Network 面板核对：强缓存显示 <code>(disk cache)</code>；
+          协商缓存那条 Status 是 <b>304</b></li>
       <li>点 304 那条 → Headers → 看 <b>Request Headers 里的 If-None-Match</b></li>
     </ol>
     <div class="expect">
-      预期对比：<br>
-      <b>强缓存</b>：transferSize = <b>0</b>，请求<b>根本没发出去</b><br>
-      <b>协商缓存</b>：transferSize &gt; 0（只有响应头），body 不传
+      预期对比（看 <b>transferSize</b>，不要看状态码）：<br>
+      <b>强缓存</b>：第 2 次起 <b>transferSize = 0</b><br>
+      <b>协商缓存</b>：第 2 次起 <b>transferSize ≈ 300</b>（只有响应头）
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>⚠ 为什么日志里两组的「状态码」都是 200</b><br>
+      <code>fetch()</code> 会把 304 <b>透明处理掉</b> —— 它内部完成重验证，
+      然后把缓存里的 body 返回给你。所以 <code>r.status</code> 是 200、
+      <code>body</code> 也是完整的 920B。<br><br>
+      光看状态码和 body，强缓存和协商缓存<b>长得一模一样</b>。
+      要区分只能看 <b>transferSize</b>（实际传了多少字节），
+      或者去 <b>Network 面板</b>看原始的 304。
     </div>
   </aside>
 
@@ -66,7 +77,10 @@
       </tr>
       <tr><td>有效期内容</td><td>直接用本地副本</td><td>向服务器确认</td></tr>
       <tr><td>还发请求吗</td><td><b>不发</b></td><td>发，但只传头</td></tr>
-      <tr><td>状态码</td><td>200 (from cache)</td><td>304</td></tr>
+      <tr><td>状态码（Network 面板）</td><td>200 (from cache)</td><td>304</td></tr>
+      <tr><td>状态码（<code>fetch()</code> 里）</td><td class="mono">200</td>
+          <td class="mono"><b>也是 200</b><br><span class="hint">304 被透明处理了</span></td></tr>
+      <tr><td>怎么区分</td><td>transferSize = 0</td><td>transferSize ≈ 几百字节</td></tr>
       <tr><td>适合</td><td>带 hash 的静态资源</td><td>HTML、常变的配置</td></tr>
     </table>
 
@@ -98,10 +112,33 @@ async function probe(url, label, times) {
     const e = performance.getEntriesByName(location.origin + url).pop();
     labLog(
       `${label} 第 ${i} 次: HTTP ${r.status}  ` +
-      `transferSize=${e.transferSize}  ` +
-      `body=${body.length}B  duration=${e.duration.toFixed(0)}ms`
+      `transferSize=${e.transferSize}B  body=${body.length}B  ${e.duration.toFixed(0)}ms`
     );
+    if (i > 1) labLog(`        ${verdict(e)}`);
   }
+}
+
+/* 把 transferSize 翻译成人话。
+ *
+ * 为什么必须靠 transferSize 而不是 r.status：
+ * fetch() 会把 304 **透明处理掉** —— 它内部完成重验证，然后把缓存里的 body
+ * 返回给你，所以 r.status 永远是 200、body 也永远是完整长度。
+ * 光看这两个数字，强缓存和协商缓存长得一模一样（这正是这个场景第一版的问题：
+ * 页面底部还写着"协商缓存 body=0"，和它自己打印的 920B 自相矛盾）。
+ *
+ * 唯一诚实的信号是实际传输字节数：
+ *   0        → 一个字节都没传，请求压根没发出去
+ *   几百字节 → 发了请求、传了响应头，body 来自本地副本（服务端回的是 304）
+ *   上千字节 → 完整下载，没走缓存
+ */
+function verdict(e) {
+  if (e.transferSize === 0) {
+    return '→ 一个字节都没传 = 请求没发出去，直接用本地副本（强缓存生效）';
+  }
+  if (e.transferSize < 800) {
+    return `→ 只传了 ${e.transferSize}B（响应头），body 来自本地副本 = 服务端回的 304（协商缓存生效）`;
+  }
+  return `→ 完整下载了 ${e.transferSize}B = 没走缓存`;
 }
 
 async function run() {
@@ -116,8 +153,10 @@ async function run() {
 
   status.textContent = '完成';
   labLog('');
-  labLog('--- 强缓存 transferSize=0 表示请求压根没发出去 ---');
-  labLog('--- 协商缓存 body=0（304 无 body），但仍有几十字节的响应头 ---');
+  labLog('★ fetch() 会把 304 藏起来 —— 它内部重验证完，把缓存里的 body 返回给你，');
+  labLog('  所以两组的 r.status 都是 200、body 都是 920B，这两个数字分不出差别。');
+  labLog('  真正的证据是 transferSize：0 = 没发请求；300 左右 = 只传了响应头。');
+  labLog('  想看 304 本身，去 Network 面板 —— 那里不会骗你。');
 }
 </script>
 </body>

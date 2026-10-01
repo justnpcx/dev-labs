@@ -462,6 +462,7 @@ do_trigger() {
     pool-stop)   url="$LAB_URL/pool/stop" ;;
     jit)         url="$LAB_URL/jit/warmup?rounds=20&iters=300000" ;;
     leak)        url="$LAB_URL/leak/static?mb=2&count=5" ;;
+    gc-summary)  url="$LAB_URL/gc/summary" ;;
     status)      url="$LAB_URL/status" ;;
     reset)       curl -s -X POST "$LAB_URL/reset" | pretty_json; echo; return 0 ;;
     help|*)
@@ -508,6 +509,12 @@ do_trigger() {
 
   泄漏类
     leak         渐进式缓存泄漏  → 配合两次 jmap -histo 对比
+
+  解读类（读证据、做决策 —— 其他场景都是制造问题）
+    gc-summary   解读 GC 日志    → 停顿统计 / 分布 / 分配速率 / 规则诊断
+                 ★ 先跑几个场景制造 GC：./lab.sh trigger leak 或 heap-slow
+                 ★ 想对比不同 GC：./lab.sh restart g1 | parallel | serial
+                   换 profile 再跑同一份负载，然后回到这个命令对比
 
   工具
     status       看 JVM 全景
