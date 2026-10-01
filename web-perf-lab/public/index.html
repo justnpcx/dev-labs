@@ -74,7 +74,7 @@
 <div class="hero">
   <h1>前端性能演练场</h1>
   <p>
-    21 个场景，每个都有 <b style="color:var(--red)">问题版</b> 和
+    24 个场景，每个都有 <b style="color:var(--red)">问题版</b> 和
     <b style="color:var(--green)">优化版</b> 两个独立页面。
     开两个标签页并排对比，在 Chrome DevTools 里看差别。<br>
     <b>按难度分四级，建议从初级顺着往上走。</b>
@@ -154,7 +154,7 @@
 
   <div class="group">
     <h2><span class="lvl lvl2">中级</span>
-      <span class="sub">学会用面板定位问题 · 8 个</span></h2>
+      <span class="sub">学会用面板定位问题 · 9 个</span></h2>
     <div class="scenarios">
       <div class="sc">
         <h3>慢 TTFB 与重定向链</h3>
@@ -178,6 +178,14 @@
         <div class="links">
           <a class="bad" href="/network/font/bad">问题版</a>
           <a class="good" href="/network/font/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>CSR vs SSR</h3>
+        <p>HTML 是个空壳，等 JS + 数据才渲染 —— 那段时间用户看的是白屏。对比服务端直出。</p>
+        <div class="links">
+          <a class="bad" href="/ssr/csr/bad">问题版</a>
+          <a class="good" href="/ssr/csr/good">优化版</a>
         </div>
       </div>
       <div class="sc">
@@ -223,7 +231,7 @@
 
   <div class="group">
     <h2><span class="lvl lvl3">高级</span>
-      <span class="sub">跨层推理，要改架构 · 5 个</span></h2>
+      <span class="sub">跨层推理，要改架构 · 7 个</span></h2>
     <div class="scenarios">
       <div class="sc">
         <h3>CORS 预检</h3>
@@ -263,6 +271,22 @@
         <div class="links">
           <a class="bad" href="/cache/sw/bad">问题版</a>
           <a class="good" href="/cache/sw/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>Hydration 阻塞交互</h3>
+        <p>SSR 让内容立刻可见，但 hydration 没跑完按钮就点不动。对比分片 hydration。</p>
+        <div class="links">
+          <a class="bad" href="/ssr/hydration/bad">问题版</a>
+          <a class="good" href="/ssr/hydration/good">优化版</a>
+        </div>
+      </div>
+      <div class="sc">
+        <h3>Hydration Mismatch</h3>
+        <p>服务端和客户端算出了不同结果，框架丢掉服务端渲染的 DOM 重建 —— SSR 白做。</p>
+        <div class="links">
+          <a class="bad" href="/ssr/mismatch/bad">问题版</a>
+          <a class="good" href="/ssr/mismatch/good">优化版</a>
         </div>
       </div>
     </div>

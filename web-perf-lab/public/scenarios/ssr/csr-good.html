@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSR vs SSR · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>服务端直出</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/ssr/csr/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新 <code>Ctrl+Shift+R</code> —— 内容<b>立刻就在</b>，没有白屏</li>
+      <li><b>Network</b> 里找 <code>/ssr/csr/good</code> 这条文档请求</li>
+      <li>点开 <b>Response</b> 标签 —— HTML 里<b>已经带着商品列表</b></li>
+      <li>看它的 <b>Size</b>：比问题版的 HTML 大得多</li>
+      <li>对比 <b>Performance</b> 的 FCP / LCP —— 应该贴着 TTFB</li>
+      <li>注意<b>没有</b> <code>/api/ssr/products</code> 这条请求了</li>
+    </ol>
+    <div class="expect">
+      预期：内容 <b>随 HTML 一起到达</b>，FCP ≈ TTFB<br>
+      代价是 HTML 变大了，而且服务端多了一次渲染开销。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>SSR 不是"免费变快"，是"把成本挪了个位置"</b><br>
+      服务端要渲染（CPU 成本 + 可能的缓存需求），
+      HTML 变大（传输成本），客户端还要 hydration（下一个场景的主题）。<br><br>
+      它换来的是：<b>首屏可见时间</b>、SEO、社交预览、弱网下的体感。
+      这笔账划不划算，取决于你的场景。
+    </div>
+    <div class="warn">
+      <b>别被"SSR 更快"骗了</b><br>
+      看 <b>Load</b> 事件的时间 —— SSR 版<b>可能更晚</b>，
+      因为它要传更多字节、还要跑 hydration。<br>
+      SSR 优化的是<b>用户什么时候看到内容</b>，不是"页面什么时候加载完"。
+      这两个指标经常背离。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="ssr-status">
+      <span class="st" id="stHtml"><span class="dot"></span>HTML 到达</span>
+      <span class="st" id="stContent"><span class="dot"></span>内容可见</span>
+      <span class="st" id="stReady"><span class="dot"></span>可交互</span>
+    </div>
+
+    <!-- 这一行会被服务端替换成渲染好的商品列表。
+         浏览器收到的 HTML 里就已经带着内容 —— 这就是 SSR。 -->
+    <div id="app" class="ssr-app"><!--SSR_MOUNT--></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>服务端做了什么</h3>
+    <pre class="logbox">// server.js —— 同一份 render 函数，在服务端跑一遍
+function ssrItemHtml(p) {
+  return `&lt;li class="pcard" data-id="${p.id}"&gt;...&lt;/li&gt;`;
+}
+
+const items = ssrProducts(n);
+html = template.replace('&lt;!--SSR_MOUNT--&gt;', items.map(ssrItemHtml).join(''));
+
+// 再把数据序列化给客户端，免得它重新推导（推导就可能推歪 → mismatch）
+html = template.replace('&lt;!--SSR_PROPS--&gt;',
+  `window.__SSR_PROPS__ = ${JSON.stringify({ items })};`);</pre>
+
+    <h3>两版的关键差别</h3>
+    <table>
+      <tr><th></th><th>CSR（问题版）</th><th>SSR（优化版）</th></tr>
+      <tr><td>HTML 内容</td><td>空壳</td><td><b>带全部内容</b></td></tr>
+      <tr><td>首屏可见</td><td>等 JS + 数据</td><td><b>随 HTML 到达</b></td></tr>
+      <tr><td>额外请求</td><td>数据接口</td><td>无</td></tr>
+      <tr><td>HTML 体积</td><td>小</td><td><b>大</b></td></tr>
+      <tr><td>服务端开销</td><td>几乎为零</td><td>每次渲染</td></tr>
+    </table>
+
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>下一步：hydration 的代价</b><br>
+      页面现在"看起来好了"，但按钮还<b>不能点</b> —— 事件还没挂上。
+      条目一多，这个"可见但不可交互"的窗口能有好几百毫秒。<br>
+      见 <a href="/ssr/hydration/bad" style="color:var(--accent)">hydration 阻塞交互</a> 场景。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script src="/assets/ssr-lab.js"></script>
+<!-- 服务端会把下面这一行换成 `window.__SSR_PROPS__ = {...}`。
+     这就是真实框架里的 __NEXT_DATA__ / __NUXT__ —— 让客户端**不必重新推导**
+     就能拿到和服务端一致的数据（推导就可能推歪 → hydration mismatch）。 -->
+<script><!--SSR_PROPS--></script>
+<script>
+const mark = (id) => document.getElementById(id).classList.add('on');
+const at = () => Math.round(performance.now());
+
+// 服务端已经把 props 序列化好了 —— 直接用，**不要自己重算**。
+// 自己重算就是 hydration mismatch 的根源（见 /ssr/mismatch）。
+onLoad(() => {
+  mark('stHtml');
+  mark('stContent');
+  labLog(`[${at()}ms] HTML 到达时，商品列表就已经在里面了 —— 没有白屏`);
+  labLog(`        props 里带了 ${window.__SSR_PROPS__.count} 条数据，不用再发请求`);
+
+  const t = performance.now();
+  const root = document.getElementById('app');
+  for (const node of root.children) {
+    node.querySelector('.padd').addEventListener('click', onAdd);
+    node.querySelector('.padd').dataset.ready = '1';
+  }
+  mark('stReady');
+  labLog(`[${at()}ms] hydration 完成（${Math.round(performance.now() - t)}ms），按钮可点了`);
+  labLog('');
+  labLog('注意：内容可见和可交互之间仍然有时间差 —— 只是这里条目少，差得不明显');
+});
+</script>
+</body>
+</html>

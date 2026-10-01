@@ -512,6 +512,136 @@ self.addEventListener('fetch', (event) => {
 `;
 }
 
+// ─────────────── SSR 场景：服务端**真的**把 HTML 渲染出来 ───────────────
+
+/**
+ * 商品数据。注意这里是**服务端和客户端各自用同一个算法算出来的** ——
+ * 这正是 SSR 成立的前提：两边跑同一份 render，产出的 HTML 必须一模一样。
+ *
+ * 一旦这个前提被破坏（用了 Date.now()、Math.random()、locale 相关的格式化……），
+ * 就会出现 hydration mismatch。见 /ssr/mismatch 场景。
+ */
+const SSR_NAMES = ['机械键盘', '人体工学椅', '27 寸显示器', '降噪耳机', '升降桌',
+                   '显示器支架', '无线鼠标', 'USB-C 扩展坞', '笔记本支架', '桌面音箱'];
+
+function ssrProducts(n) {
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    out[i] = {
+      id: i,
+      name: SSR_NAMES[i % SSR_NAMES.length] + ' #' + i,
+      price: 99 + (i * 37) % 900,
+    };
+  }
+  return out;
+}
+
+/**
+ * 渲染一个商品条目。
+ *
+ * ⚠ 这份实现**在服务端和客户端各有一份，内容完全一致** —— 这是刻意的。
+ * 真实框架靠"同一份组件代码打包后在两端分别执行"来保证一致，
+ * 这里没有构建步骤，所以只能手写两份。差别只在于：
+ * 服务端产出字符串，客户端产出 DOM 节点（或做比对）。
+ */
+function ssrItemHtml(p) {
+  return `<li class="pcard" data-id="${p.id}">`
+       + `<span class="pthumb"></span>`
+       + `<span class="pname">${p.name}</span>`
+       + `<span class="pprice">¥${p.price}</span>`
+       + `<span class="ptags"><i>现货</i><i>包邮</i></span>`
+       + `<button class="padd" data-add="${p.id}">加入购物车</button>`
+       + `</li>`;
+}
+
+function ssrListHtml(items) {
+  return items.map(ssrItemHtml).join('');
+}
+
+/**
+ * mismatch 场景专用的渲染：每张卡片多一个「实验分组」徽章。
+ *
+ * 分组怎么来的？真实项目里通常是 A/B 实验平台下发。
+ * 这里的**错误做法**是用 Math.random() 现场决定 —— 服务端算一次、客户端又算一次，
+ * 两次结果必然不同，于是 hydration mismatch。
+ * 正确做法是用 user id 做**确定性哈希**，或者干脆把服务端的结果序列化下去。
+ */
+function ssrItemHtmlWithGroup(p, group) {
+  return `<li class="pcard" data-id="${p.id}" data-group="${group}">`
+       + `<span class="pthumb"></span>`
+       + `<span class="pname">${p.name}</span>`
+       + `<span class="pprice">¥${p.price}</span>`
+       + `<span class="pgroup">实验组 ${group}</span>`
+       + `<button class="padd" data-add="${p.id}">加入购物车</button>`
+       + `</li>`;
+}
+
+/** 每个场景的默认条目数。规模不同是因为要观察的瓶颈不同（见各自页面说明）。 */
+const SSR_ITEM_COUNT = {
+  csr: 60,          // 只要够看出白屏期
+  hydration: 8000,  // 要够让 hydration 真的卡住主线程几百毫秒（实测约 300ms）
+  mismatch: 40,     // 现象是"对不上"，不是"慢"，条目少反而看得清
+};
+
+/**
+ * /ssr/<场景>/<bad|good> —— SSR 场景页。
+ *
+ * 和别的场景不同，这几个页面**不是静态文件直接发出去的**：
+ * 服务端会读模板、把 `<!--SSR_MOUNT-->` 换成真正渲染好的 HTML、
+ * 把 `<!--SSR_PROPS-->` 换成序列化好的 props，再把结果发出去。
+ * 换句话说，浏览器拿到的 HTML 里**已经带着内容**了 —— 这就是 SSR。
+ */
+function serveSsrScenario(req, res, urlPath) {
+  const m = urlPath.match(/^\/ssr\/(csr|hydration|mismatch)\/(bad|good)$/);
+  if (!m) return false;
+
+  const [, name, variant] = m;
+  const file = path.join(PUBLIC_DIR, 'scenarios', 'ssr', `${name}-${variant}.html`);
+  if (!path.resolve(file).startsWith(path.resolve(PUBLIC_DIR)) || !fs.existsSync(file)) {
+    send(res, 404, `场景不存在：${urlPath}`);
+    return true;
+  }
+
+  const params = new URL(req.url, 'http://x').searchParams;
+  const n = Math.min(Number(params.get('n') || SSR_ITEM_COUNT[name]), 20000);
+  const items = ssrProducts(n);
+
+  // mismatch 场景要演示"两边算出来不一样"，所以服务端渲染的是一个**服务端时刻**，
+  // 而且故意不放进 props（这就是 bug 本身）。
+  const serverTime = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+  let html = fs.readFileSync(file, 'utf8');
+
+  // mismatch 场景：服务端给每张卡片随机分一个实验组
+  const isMismatch = name === 'mismatch';
+  const groups = isMismatch ? items.map(() => (Math.random() < 0.5 ? 'A' : 'B')) : null;
+
+  // 只有标记了 SSR_MOUNT 的页面才注入内容。CSR 版故意留空 —— 那个空壳就是"白屏"的来源。
+  html = html.replace('<!--SSR_MOUNT-->', () => (
+    isMismatch
+      ? items.map((p, i) => ssrItemHtmlWithGroup(p, groups[i])).join('')
+      : ssrListHtml(items)
+  ));
+
+  // props 序列化。真实框架把它塞在一个 <script type="application/json"> 或全局变量里，
+  // 目的都一样：让客户端**不必重新推导**就能拿到和服务端一致的数据。
+  const props = { count: n, serverTime, items };
+  // ★ mismatch 的修复点就在这一行：
+  //   good 版把服务端的分组结果一起给客户端 → 客户端直接用 → 一致；
+  //   bad 版故意不给 → 客户端只能自己 Math.random() 重算 → 必然对不上。
+  if (isMismatch && variant === 'good') props.groups = groups;
+
+  html = html.replace('<!--SSR_PROPS-->', () => `window.__SSR_PROPS__ = ${JSON.stringify(props)};`);
+
+  send(res, 200, html, {
+    'Content-Type': MIME['.html'],
+    'Cache-Control': 'no-store',
+    // 让 Network 面板里能一眼看出这是服务端渲染的
+    'X-Lab-Rendered': 'server',
+  });
+  return true;
+}
+
 // ─────────────────────────── API ───────────────────────────
 
 async function handleApi(req, res, url) {
@@ -646,6 +776,16 @@ async function handleApi(req, res, url) {
     });
   }
 
+  // CSR 场景的数据源。**带延迟** —— 纯客户端渲染那段白屏，就来自"等这份数据"。
+  // SSR 版不需要它：数据在服务端就已经渲染进 HTML 了。
+  if (p === '/api/ssr/products') {
+    const n = Math.min(Number(url.searchParams.get('n') || 60), 20000);
+    const delay = Math.min(Number(url.searchParams.get('delay') || 600), 5000);
+    await sleep(delay);
+    return sendJson(res, { count: n, items: ssrProducts(n) },
+                    { 'Cache-Control': 'no-store' });
+  }
+
   send(res, 404, '未知 API');
 }
 
@@ -661,6 +801,7 @@ function serveScenario(res, urlPath) {
   // /debug/override          →  scenarios/debug/override.html
   // /lighthouse/audit/bad    →  scenarios/lighthouse/audit-bad.html
   // /cache/sw/bad            →  scenarios/cache/sw-bad.html
+  // 注意 ssr 组不走这里 —— 它的页面是服务端动态渲染的，见 serveSsrScenario
   const m = urlPath.match(/^\/(network|performance|debug|lighthouse|cache)\/([a-z0-9-]+)(?:\/(bad|good))?\/?$/i);
   if (!m) return false;
 
@@ -688,6 +829,8 @@ const server = http.createServer(async (req, res) => {
     if (serveAssetVariant(req, res, p)) return;
     if (serveLighthouseAsset(req, res, p)) return;
     if (serveSwLab(req, res, p)) return;
+    // SSR 场景要放在 serveScenario 前面：它们是动态生成的，不是静态文件
+    if (serveSsrScenario(req, res, p)) return;
     if (serveScenario(res, p)) return;
 
     // 其余走 public/ 静态目录

@@ -1,6 +1,6 @@
 # web-perf-lab
 
-面向 **Chrome DevTools** 的实战演练场。21 个场景，按
+面向 **Chrome DevTools** 的实战演练场。24 个场景，按
 **初级 → 中级 → 高级 → 终极** 四级排列，每个都有**问题版 / 优化版**
 两个独立页面 —— 开两个标签页并排对比 Network 和 Performance 面板。
 
@@ -23,7 +23,7 @@
 
 ## 场景清单
 
-21 个场景按难度分四级。**建议从初级顺着往上走** ——
+24 个场景按难度分四级。**建议从初级顺着往上走** ——
 每一级都在用前一级的技能，跳着看容易变成"照着点一遍但没懂"。
 
 ### 初级 · 看懂浏览器怎么加载一个页面（6 个）
@@ -39,7 +39,7 @@
 | 渲染阻塞 JS | 同步 script 导致白屏；`defer` 只解决白屏不解决卡 |
 | 动画属性选择 | `left/top` vs `transform`；合成层与 `will-change` |
 
-### 中级 · 学会用面板定位问题（8 个）
+### 中级 · 学会用面板定位问题（9 个）
 
 要会用 Network 的 Timing、Performance 的火焰图，但因果链是单向的。
 
@@ -48,13 +48,14 @@
 | 慢 TTFB 与重定向链 | Timing 面板拆解；重定向为什么贵 |
 | 资源优先级 | `loading="lazy"` 用错地方；preload / fetchpriority / preconnect |
 | 字体加载 | 字体为什么"发现得晚"；FOIT vs FOUT；`font-display` 五个值 |
+| CSR vs SSR | 白屏期从哪来；HTML 是空壳还是有内容；FCP ≈ TTFB |
 | 未节流的事件监听 | scroll 触发次数远高于渲染帧；rAF 节流 |
 | 布局抖动 | 读写交替导致强制同步布局；批量读 → 批量写 |
 | 长任务阻塞主线程 | Main 轨道红色三角；切片让出 vs Web Worker |
 | **动态 JS 替换** | Sources → Overrides，改线上 JS 即时生效、刷新保留 |
 | **断点全家桶** | 条件断点、日志点、DOM 断点、Fetch 断点、事件监听断点、Blackboxing |
 
-### 高级 · 跨层推理，要改架构（5 个）
+### 高级 · 跨层推理，要改架构（7 个）
 
 要同时考虑网络、渲染、线程、缓存几层，解法往往不是"改一行"。
 
@@ -65,6 +66,8 @@
 | 主线程卸载 | Web Worker 的四个硬约束；结构化克隆的成本 |
 | 长列表渲染 | 虚拟滚动：复杂度从 `O(n)` 降到 `O(视口)`；`translateY` vs `top` |
 | Service Worker 缓存 | SW 透传 = 白装；stale-while-revalidate；缓存版本号 |
+| **Hydration 阻塞交互** | 可见 ≠ 可交互；分片 hydration；**让出主线程不是免费的** |
+| **Hydration Mismatch** | `Math.random()` / `Date.now()` 导致两端渲染不一致；SSR 成果被丢弃重建 |
 
 ### 终极 · 没有「改一行就好」的解法（2 个）
 
@@ -150,13 +153,32 @@
 | `/api/font?delay=N&kb=N` | 延迟返回的**占位字体**（演示 FOIT/FOUT） |
 | `/cache/sw/{bad\|good}/sw.js` | Service Worker 脚本。**作用域 = 脚本所在目录**，所以限在 `/cache/sw/<mode>/` 内，不污染其他场景 |
 | `/cache/sw/{bad\|good}/data.json?ms=N` | SW 场景的数据源（延迟可调） |
+| `/ssr/{csr\|hydration\|mismatch}/{bad\|good}?n=N` | **SSR 场景页。服务端动态渲染** —— 不是静态文件，HTML 里真的带内容 |
+| `/api/ssr/products?n=N&delay=N` | CSR 场景的数据源（带延迟，白屏期就来自它） |
+
+### SSR 场景为什么不走静态文件
+
+其他场景的页面都是 `public/scenarios/**` 下的静态 HTML，直接发出去。
+但 SSR 的页面**必须由服务端渲染**才有意义 —— 否则"HTML 里带着内容"这件事
+就变成了"我手写了一段 HTML"，演示不出 SSR 本身。
+
+所以 `serveSsrScenario()` 会读模板、把两个占位符替换掉再发出去：
+
+```js
+html = html.replace('<!--SSR_MOUNT-->', () => ssrListHtml(items));
+html = html.replace('<!--SSR_PROPS-->', () => `window.__SSR_PROPS__ = ${JSON.stringify(props)};`);
+```
+
+`ssrItemHtml()` 在 `server.js` 和 `assets/ssr-lab.js` 里**逐字各有一份** ——
+这正是 SSR 的前提：两端跑同一份 render。一旦这条被打破（`Math.random()`、
+`Date.now()`），就会 hydration mismatch。
 ### 难度分级是怎么实现的
 
-21 个场景分四级，但**等级没有写进任何场景页** ——
+24 个场景分四级，但**等级没有写进任何场景页** ——
 `assets/lab.js` 里有一张 `LAB_LEVELS` 表，页面加载时按 `location.pathname`
 查出等级，自动往页头插一个彩色徽章。
 
-这样调整分级只改一处，不用动 42 个 HTML 文件。
+这样调整分级只改一处，不用动 40 多个 HTML 文件。
 
 ## 主题
 

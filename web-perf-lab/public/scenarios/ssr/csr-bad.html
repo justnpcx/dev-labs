@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSR vs SSR · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>纯客户端渲染</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/ssr/csr/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新 <code>Ctrl+Shift+R</code>，<b>盯着下面那块区域</b></li>
+      <li>会先看到一段空白 —— 这就是 <b>白屏期</b></li>
+      <li><b>Network</b> 面板看 <code>/api/ssr/products</code> 的耗时</li>
+      <li>看这条记录的 <b>Start time</b>：它在 HTML 之后才开始</li>
+      <li>对比 <b>Performance</b> 面板的 <b>FCP / LCP</b> 标记</li>
+      <li>右键 HTML 那条记录 → Open in new tab，看响应体是不是个空壳</li>
+    </ol>
+    <div class="expect">
+      预期：内容在 <b>约 0.7 秒</b>后才出现<br>
+      HTML 里 <code>#app</code> 是空的 —— 内容全靠 JS 后来填。
+    </div>
+    <div class="warn">
+      <b>为什么这叫"问题版"</b><br>
+      浏览器拿到 HTML 时**里面什么都没有**，必须：
+      <code>下载 JS → 执行 → 发请求拿数据 → 再渲染</code>。<br>
+      这一串是<b>串行</b>的，用户全程看着白屏。<br><br>
+      更糟的是：搜索引擎爬虫、社交平台的链接预览、
+      禁用 JS 的用户 —— 看到的都是这个空壳。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>一个常见反驳</b><br>
+      "我们有骨架屏啊。" —— 骨架屏只是把白屏换成了灰色方块，
+      <b>首屏可见时间一点没提前</b>。真正的解法是让 HTML 本身就带内容。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="ssr-status">
+      <span class="st" id="stHtml"><span class="dot"></span>HTML 到达</span>
+      <span class="st" id="stContent"><span class="dot"></span>内容可见</span>
+      <span class="st" id="stReady"><span class="dot"></span>可交互</span>
+    </div>
+
+    <div id="app" class="ssr-app"></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>页面的 HTML 长这样</h3>
+    <pre class="logbox">&lt;body&gt;
+  &lt;div id="app"&gt;&lt;/div&gt;      &lt;!-- ★ 空的 --&gt;
+  &lt;script src="/bundle.js"&gt;&lt;/script&gt;
+&lt;/body&gt;
+
+// bundle.js 里：
+fetch('/api/products')          // ① 先等网络
+  .then(r =&gt; r.json())
+  .then(({ items }) =&gt; {
+    app.innerHTML = renderList(items);   // ② 再建 DOM
+    attachHandlers();                    // ③ 再挂事件
+  });</pre>
+
+    <h3>白屏期到底有多长</h3>
+    <table>
+      <tr><th>阶段</th><th>耗时</th></tr>
+      <tr><td>HTML 到达</td><td>很快（因为是个空壳，文件很小）</td></tr>
+      <tr><td>下载 + 解析 JS</td><td>取决于 bundle 大小</td></tr>
+      <tr><td>请求数据</td><td class="mono">600ms（本场景）</td></tr>
+      <tr><td>构建 DOM + 挂事件</td><td>取决于条目数</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      <b>四段加起来</b>才是用户看到内容的时刻。SSR 把第 3、4 段挪到了服务端 ——
+      HTML 到达时内容就已经在里面了。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script src="/assets/ssr-lab.js"></script>
+<script>
+const T0 = performance.now();
+const mark = (id) => document.getElementById(id).classList.add('on');
+const at = () => Math.round(performance.now());
+
+onLoad(async () => {
+  mark('stHtml');
+  labLog(`[${at()}ms] HTML 到达，但 #app 是空的 —— 白屏期从这里开始`);
+
+  const t = performance.now();
+  const resp = await fetch('/api/ssr/products?n=60&delay=600');
+  const { items } = await resp.json();
+  labLog(`[${at()}ms] 数据到达，等了 ${Math.round(performance.now() - t)}ms`);
+  labLog('        这整段时间里，页面上一个字都没有');
+
+  document.getElementById('app').innerHTML = ssrListHtml(items);
+  mark('stContent');
+  labLog(`[${at()}ms] 内容终于渲染出来了`);
+
+  document.querySelectorAll('.padd').forEach((b) => {
+    b.addEventListener('click', onAdd);
+    b.dataset.ready = '1';
+  });
+  mark('stReady');
+  labLog(`[${at()}ms] 可交互。从 HTML 到这一刻，用户等了这么久`);
+  labLog('');
+  labLog('对比优化版：那边 HTML 到达时内容就已经在了');
+});
+</script>
+</body>
+</html>

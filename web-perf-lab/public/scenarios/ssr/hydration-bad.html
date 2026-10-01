@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hydration 阻塞交互 · 问题版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge bad">问题版</span>
+  <h1>可见，但点不动</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/ssr/hydration/good">看优化版 →</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新，内容<b>立刻可见</b> —— 这跟上一个场景的优化版一样</li>
+      <li><b>马上</b>点任意一个「加入购物车」按钮</li>
+      <li>看下面的日志：<b>点击被丢弃了</b>，按钮毫无反应</li>
+      <li>等日志说「可交互」之后再点 —— 这次才生效</li>
+      <li><b>Performance</b> 面板录一次，看 Main 轨道那一整块长任务</li>
+      <li>看上面那排帧计数：hydration 期间它<b>一格都不涨</b></li>
+    </ol>
+    <div class="expect">
+      预期：内容 <b>0ms 可见</b>，但要等 <b>约 250ms</b> 才能点<br>
+      这中间的窗口，就是「看起来好了，其实点不动」。<br>
+      <b>hydration 的耗时正比于页面复杂度</b> —— 把 URL 的 <code>?n=</code>
+      改大（如 <code>?n=4000</code>）会明显变短，改小则变长，自己试。
+    </div>
+    <div class="warn">
+      <b>这才是 SSR 真正的坑</b><br>
+      所有人都盯着 FCP/LCP 优化，做完 SSR 指标很漂亮 ——
+      但用户点按钮没反应，体感是"这网站好卡"。<br><br>
+      衡量这件事的指标叫 <b>INP</b>（Interaction to Next Paint），
+      而 SSR 页面最常见的 INP 问题就是 hydration 太长。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>为什么必须"重跑一遍"</b><br>
+      服务端渲染出来的只是一堆 HTML —— <b>没有任何事件监听</b>。
+      客户端必须重新执行一遍组件、和现有 DOM 比对、再把事件挂上。<br>
+      这一步省不掉，只能想办法<b>别一口气做完</b>。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="ssr-status">
+      <span class="st" id="stHtml"><span class="dot"></span>HTML 到达</span>
+      <span class="st" id="stContent"><span class="dot"></span>内容可见</span>
+      <span class="st" id="stReady"><span class="dot"></span>可交互</span>
+      <span class="st"><span class="dot" style="background:var(--red)"></span>
+        帧 <b id="frames" style="color:var(--text-strong)">0</b></span>
+    </div>
+
+    <p class="hint" style="margin-bottom:10px">
+      <b>刷新之后立刻点下面的按钮</b> —— 对比"现在点"和"日志说可交互之后再点"的区别。
+    </p>
+
+    <div id="app" class="ssr-app"><!--SSR_MOUNT--></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>问题出在这一行</h3>
+    <pre class="logbox">// 一口气把 1500 个节点全部 hydration 完 —— 主线程被独占
+function hydrateAll(root, props) {
+  for (let i = 0; i &lt; root.children.length; i++) {
+    hydrateNode(root.children[i], props.items[i]);   // ★ 同步循环
+  }
+}
+
+// hydrateNode 里做的事（框架也一样）：
+//   ① 重新执行组件，算出"应该长什么样"
+//   ② 和现有 DOM 比对（reconciliation）
+//   ③ 挂事件监听</pre>
+
+    <h3>这段时间里发生了什么</h3>
+    <table>
+      <tr><th>现象</th><th>原因</th></tr>
+      <tr><td>按钮点了没反应</td><td>事件监听还没挂上</td></tr>
+      <tr><td>页面滚动发涩</td><td>主线程在跑 hydration，没空渲染</td></tr>
+      <tr><td>输入框打不进字</td><td>同上，输入事件在排队</td></tr>
+      <tr><td>FCP/LCP 却很好看</td><td>内容确实早就画出来了</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      这四行同时成立 —— 这就是为什么<b>只看 Core Web Vitals 的 FCP/LCP 会骗人</b>。
+    </p>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script src="/assets/ssr-lab.js"></script>
+<!-- 服务端会把下面这一行换成 `window.__SSR_PROPS__ = {...}`。
+     这就是真实框架里的 __NEXT_DATA__ / __NUXT__ —— 让客户端**不必重新推导**
+     就能拿到和服务端一致的数据（推导就可能推歪 → hydration mismatch）。 -->
+<script><!--SSR_PROPS--></script>
+<script>
+const mark = (id) => document.getElementById(id).classList.add('on');
+const at = () => Math.round(performance.now());
+
+// 帧计数：hydration 期间它会停住，是"主线程被占"最直观的证据
+let frames = 0;
+(function tick() { frames++; document.getElementById('frames').textContent = frames; requestAnimationFrame(tick); })();
+
+// 捕获阶段监听整个文档。这样即使用户点的是**还没挂上事件的**按钮，
+// 我们也能知道他点了 —— 真实用户可不会收到这条提示，他们只会觉得"点了没反应"。
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('.padd');
+  if (btn && btn.dataset.ready !== '1') {
+    labLog(`⚠ 你点了商品 #${btn.dataset.add}，但 hydration 还没跑到它 —— 这次点击被丢弃了`);
+  }
+}, true);
+
+onLoad(() => {
+  mark('stHtml');
+  mark('stContent');
+  const props = window.__SSR_PROPS__;
+  labLog(`[${at()}ms] HTML 到达，${props.count} 个商品已经可见`);
+  labLog('        但按钮还挂不上事件 —— 现在点它们不会有任何反应');
+
+  // 等一帧再开始，让上面的状态先画出来（否则用户看不到"内容可见"这一刻）
+  requestAnimationFrame(() => {
+    const t = performance.now();
+    const before = frames;
+    labLog(`[${at()}ms] 开始 hydration（一次性，主线程会被占住）…`);
+
+    const r = hydrateAll(document.getElementById('app'), props);
+
+    const cost = performance.now() - t;
+    document.querySelectorAll('.padd').forEach((b) => { b.dataset.ready = '1'; });
+    mark('stReady');
+    labLog(`[${at()}ms] hydration 完成，耗时 ${cost.toFixed(0)}ms`);
+    labLog(`        这期间 rAF 只推进了 ${frames - before} 帧（正常 1 秒 60 帧）`);
+    labLog(`        处理了 ${r.count} 个节点，比对不一致 ${r.mismatched} 个`);
+    labLog('');
+    labLog('现在再点按钮就正常了 —— 对比优化版，那个在 hydration 期间就能点');
+  });
+});
+</script>
+</body>
+</html>

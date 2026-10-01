@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hydration 阻塞交互 · 优化版</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<script>
+/* 主题引导 —— 必须放在样式表之后、body 之前，而且是**同步**执行。
+   晚一步（比如放在 body 末尾）就会先按系统主题画一帧、再切到用户选的，
+   出现明显闪烁（FOUC）。这是主题方案里最容易被忽略的一步。
+   这里只做一件事：把「用户偏好」解析成「实际主题」写到 <html data-theme>。 */
+(function () {
+  var pref = 'auto';
+  try { pref = localStorage.getItem('lab-theme') || 'auto'; } catch (e) { /* 隐私模式会抛 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  document.documentElement.dataset.theme = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.themePref = pref;
+})();
+</script>
+</head>
+<body>
+
+<header class="lab-header">
+  <a class="back" href="/">← 索引</a>
+  <span class="badge good">优化版</span>
+  <h1>分片 hydration</h1>
+  <span class="spacer"></span>
+  <a class="counterpart" href="/ssr/hydration/bad">← 回问题版</a>
+</header>
+
+<div class="wrap split">
+
+  <aside class="card observe">
+    <h2>DevTools 观察清单</h2>
+    <ol>
+      <li>硬刷新，然后<b>马上</b>点最前面几个「加入购物车」</li>
+      <li>这次<b>有反应了</b> —— 因为前面的节点先被 hydration</li>
+      <li>往下滚，点靠后的商品 —— 那些可能还没轮到</li>
+      <li>看帧计数：全程<b>一直在涨</b>，没有冻住</li>
+      <li><b>Performance</b> 面板对比：长任务被切成很多小段</li>
+      <li>看日志里 hydration 的总耗时 —— 和问题版<b>差不多，甚至更久</b></li>
+    </ol>
+    <div class="expect">
+      预期：<b>第一屏的按钮约 20ms 就能点</b>，后面的陆续跟上<br>
+      注意总耗时<b>比问题版更长</b>（多了十几次渲染）—— 这不是 bug，见下方说明。
+    </div>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>核心思想：把"可交互"变成渐进的</b><br>
+      用户只和眼前这一屏交互，那就<b>先 hydration 眼前这一屏</b>。<br><br>
+      真实框架里的对应方案：
+      <b>React 18 selective hydration</b>（按用户交互优先级）、
+      <b>islands 架构</b>（只 hydration 需要交互的岛屿）、
+      <b>progressive hydration</b>（分帧处理）。
+    </div>
+  </aside>
+
+  <main class="card demo">
+    <h2>演示</h2>
+
+    <div class="ssr-status">
+      <span class="st" id="stHtml"><span class="dot"></span>HTML 到达</span>
+      <span class="st" id="stContent"><span class="dot"></span>内容可见</span>
+      <span class="st" id="stReady"><span class="dot"></span>全部可交互</span>
+      <span class="st"><span class="dot" style="background:var(--green)"></span>
+        帧 <b id="frames" style="color:var(--text-strong)">0</b></span>
+      <span class="st"><span class="dot" style="background:var(--accent)"></span>
+        已 hydration <b id="done" style="color:var(--text-strong)">0</b></span>
+    </div>
+
+    <p class="hint" style="margin-bottom:10px">
+      <b>刷新之后立刻点最前面几个按钮</b> —— 这次会立刻有反应。
+    </p>
+
+    <div id="app" class="ssr-app"><!--SSR_MOUNT--></div>
+
+    <pre id="log">等待开始…</pre>
+
+    <h3>改动：每处理一批就让出主线程</h3>
+    <pre class="logbox">async function hydrateChunked(root, props, chunkSize = 1000) {
+  for (let i = 0; i &lt; root.children.length; i += chunkSize) {
+    const end = Math.min(i + chunkSize, root.children.length);
+    for (let j = i; j &lt; end; j++) {
+      hydrateNode(root.children[j], props.items[j]);   // 一批 500 个
+    }
+    await yieldToMain();      // ★ 把主线程还给浏览器
+  }
+}
+
+// yieldToMain 优先用 scheduler.yield()，它让出后**优先**被调度回来，
+// 不像 setTimeout(0) 那样排到队尾</pre>
+
+    <h3>问题版 vs 优化版</h3>
+    <table>
+      <tr><th></th><th>一次性</th><th>分片</th></tr>
+      <tr><td>总 hydration 耗时</td><td>约 240ms</td><td><b>约 440ms（更长）</b></td></tr>
+      <tr><td>首屏可交互</td><td><b>等 240ms</b></td><td><b>约 20ms</b></td></tr>
+      <tr><td>期间能否滚动</td><td>发涩</td><td>顺滑</td></tr>
+      <tr><td>长任务</td><td>一整块</td><td>切成小段</td></tr>
+    </table>
+    <p class="hint" style="margin-top:10px">
+      <b>注意总耗时反而变长了</b>，这不是 bug：每次让出主线程，浏览器都会
+      趁机做一次渲染 —— 让出十几次就多付十几次渲染的代价。<br>
+      分片优化的是<b>「用户要等多久才能用」</b>，不是"总耗时"。
+      这是响应性优化里最典型的一类交换：<b>拿吞吐换延迟</b>。
+    </p>
+    <div class="warn" style="background:var(--accent-bg);border-color:var(--accent);color:var(--expect-text)">
+      <b>顺带一提：这页能跑这么快，靠的是一行 CSS</b><br>
+      <code>.pcard { content-visibility: auto }</code> —— 视口外的卡片跳过布局和绘制。<br>
+      没有它的话，8000 张卡片光是布局就要 <b>2 秒以上</b>，
+      而且每次让出都要重付一次，分片版会比一次性慢 <b>9 倍</b> ——
+      本场景第一版就是这样，数据完全被带偏了。
+    </div>
+
+    <div class="warn">
+      <b>但分片不是银弹</b><br>
+      如果 hydration 总量是 5 秒，切成 100 片也只是把卡顿摊开，
+      用户滚到底部时那些按钮还是点不动。<br>
+      真正的解法是<b>少 hydration 一些东西</b>：
+      静态内容根本不需要 hydration，只有要交互的部分才需要（islands 架构）。
+    </div>
+  </main>
+
+</div>
+
+<script src="/assets/lab.js"></script>
+<script src="/assets/ssr-lab.js"></script>
+<!-- 服务端会把下面这一行换成 `window.__SSR_PROPS__ = {...}`。
+     这就是真实框架里的 __NEXT_DATA__ / __NUXT__ —— 让客户端**不必重新推导**
+     就能拿到和服务端一致的数据（推导就可能推歪 → hydration mismatch）。 -->
+<script><!--SSR_PROPS--></script>
+<script>
+const mark = (id) => document.getElementById(id).classList.add('on');
+const at = () => Math.round(performance.now());
+
+let frames = 0;
+(function tick() { frames++; document.getElementById('frames').textContent = frames; requestAnimationFrame(tick); })();
+
+onLoad(async () => {
+  mark('stHtml');
+  mark('stContent');
+  const props = window.__SSR_PROPS__;
+  const root = document.getElementById('app');
+  const doneEl = document.getElementById('done');
+
+  labLog(`[${at()}ms] HTML 到达，${props.count} 个商品已可见`);
+  labLog('        现在开始**分片** hydration —— 每 500 个让出一次主线程');
+  labLog('        刷新后立刻点最前面的按钮，应该立刻有反应');
+
+  const t = performance.now();
+  const CHUNK = 500;
+  const nodes = root.children;
+  let mismatched = 0;
+
+  for (let i = 0; i < nodes.length; i += CHUNK) {
+    const end = Math.min(i + CHUNK, nodes.length);
+    for (let j = i; j < end; j++) {
+      if (!hydrateNode(nodes[j], props.items[j])) mismatched++;
+      nodes[j].querySelector('.padd').dataset.ready = '1';
+    }
+    doneEl.textContent = end;
+    if (i === 0) labLog(`[${at()}ms] 前 ${end} 个已经可交互了 —— 用户不用等剩下的`);
+    await yieldToMain();
+  }
+
+  const cost = performance.now() - t;
+  mark('stReady');
+  labLog(`[${at()}ms] 全部 hydration 完成，总耗时 ${cost.toFixed(0)}ms`);
+  labLog(`        比对不一致 ${mismatched} 个`);
+  labLog('');
+  labLog(`对比问题版：那边要等 240ms 才能点第一个按钮，这边约 20ms；`);
+  labLog(`但总耗时这边更长（${cost.toFixed(0)}ms vs 240ms）—— 让出主线程不是免费的，`);
+  labLog('每次让出浏览器都要渲染一次。换来的是"不用等"和全程不掉帧');
+});
+</script>
+</body>
+</html>

@@ -137,6 +137,7 @@ const LAB_LEVELS = {
     'performance/listener', // 事件频率 vs 渲染帧率
     'performance/thrash',   // 强制同步布局
     'performance/longtask', // 长任务切分
+    'ssr/csr',              // 白屏期：CSR vs 服务端直出
     'debug/override',       // 不改代码改线上 JS
     'debug/breakpoints',    // 断点全家桶
   ],
@@ -147,6 +148,8 @@ const LAB_LEVELS = {
     'performance/worker',   // 把计算搬出主线程
     'performance/virtual',  // 长列表：复杂度从 O(n) 降到 O(视口)
     'cache/sw',             // 应用层缓存，策略得自己写对
+    'ssr/hydration',        // 可见 ≠ 可交互
+    'ssr/mismatch',         // 两端渲染不一致，SSR 白做
   ],
   // 终极：没有"改一行就好"的解法，要靠工具反复逼近
   4: [

@@ -171,7 +171,7 @@ do_ui() {
 }
 
 do_routes() {
-  echo "21 个场景（问题版 / 优化版成对，可开两个标签页并排对比）。"
+  echo "24 个场景（问题版 / 优化版成对，可开两个标签页并排对比）。"
   echo "按难度分四级，建议从初级顺着往上走。"
   echo
   echo "── 初级 · 看懂浏览器怎么加载一个页面 ─────────────────────"
@@ -186,6 +186,7 @@ do_routes() {
   echo "  慢 TTFB 与重定向     $LAB_URL/network/ttfb/bad           vs  /good"
   echo "  资源优先级           $LAB_URL/network/priority/bad       vs  /good"
   echo "  字体加载             $LAB_URL/network/font/bad           vs  /good"
+  echo "  CSR vs SSR           $LAB_URL/ssr/csr/bad                vs  /good"
   echo "  未节流事件监听       $LAB_URL/performance/listener/bad   vs  /good"
   echo "  布局抖动             $LAB_URL/performance/thrash/bad     vs  /good"
   echo "  长任务               $LAB_URL/performance/longtask/bad   vs  /good"
@@ -198,6 +199,8 @@ do_routes() {
   echo "  主线程卸载 Worker    $LAB_URL/performance/worker/bad     vs  /good"
   echo "  长列表虚拟滚动       $LAB_URL/performance/virtual/bad    vs  /good"
   echo "  Service Worker 缓存  $LAB_URL/cache/sw/bad               vs  /good"
+  echo "  Hydration 阻塞交互   $LAB_URL/ssr/hydration/bad          vs  /good"
+  echo "  Hydration Mismatch   $LAB_URL/ssr/mismatch/bad           vs  /good"
   echo
   echo "── 终极 · 没有「改一行就好」的解法 ───────────────────────"
   echo "  内存泄漏             $LAB_URL/performance/leak/bad       vs  /good"
@@ -208,6 +211,9 @@ do_routes() {
   echo
   echo "⚠ CORS 预检需要真跨源，只能用 http://localhost:8082 打开，"
   echo "  公网入口的 Cloudflare Access 会 403 掉预检。见 README「已知限制」。"
+  echo
+  echo "ℹ SSR 三个场景的页面是**服务端动态渲染**的（不是静态文件），"
+  echo "  这样 HTML 里才会真的带着内容 —— 这正是 SSR 本身。"
   echo
   echo "索引页：$LAB_URL/"
 }
