@@ -17,6 +17,10 @@
 #   ./lab.sh dump-heap [标签]  主动落一份堆快照到 dumps/
 #   ./lab.sh dump-thread [次数] [间隔秒]  连续采线程栈（默认 1 次）
 #   ./lab.sh trigger <场景>    触发某个演练场景
+#   ./lab.sh arthas [命令]     进 Arthas 控制台；带参数则跑一批命令后退出
+#   ./lab.sh arthas-demo       打印 Arthas 三个场景（排错/性能/热更新）的完整步骤
+#   ./lab.sh arthas-hotfix     一键跑完整热更新链路（jad→改→mc→retransform→验证）
+#   ./lab.sh arthas-reset      重置 Arthas 服务端（改了启动参数后要用）
 #   ./lab.sh diagnose          在容器内采集诊断信息到 logs/
 #   ./lab.sh clean             清理历史 dump 与诊断文件（dump 很占地方）
 #   ./lab.sh profiles          列出所有 JVM 参数预设
@@ -123,9 +127,28 @@ write_env() {
 # 由 ./lab.sh start <profile> 自动生成（profile=$profile），不要手改
 LAB_JVM_LIMITS=$limits
 LAB_GC=$gc
-LAB_COMMON=-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps -XX:NativeMemoryTracking=$nmt -Xlog:gc*:file=/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
+LAB_COMMON=-Duser.home=/tmp -Djava.io.tmpdir=/arthas-tmp -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps -XX:NativeMemoryTracking=$nmt -Xlog:gc*:file=/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
 EOF
 }
+
+# 为什么要有 -Duser.home=/tmp：
+#   容器根文件系统是只读的，而 Java 的 user.home 取自 passwd 数据库（/root）。
+#   Arthas 的 jad / mc / dump 这些命令会往 user.home/logs/arthas/ 写中间文件，
+#   不改的话会报 "make sure you have write permission of the directory
+#   /root/logs/arthas/classdump"。
+#
+#   ★ 注意这个参数必须加在**目标 JVM** 上，不能只加在 arthas-boot 客户端上 ——
+#     Arthas 的核心是作为 agent 跑在目标 JVM 里的，classdump 路径在那里解析。
+#     实测：只给客户端传 -Duser.home 完全没用。
+#
+#   应用的日志路径是绝对的（/logs/app.log），不受 user.home 影响。
+#
+# 为什么还要 -Djava.io.tmpdir=/arthas-tmp：
+#   Arthas 的 profiler 会把 async-profiler 的 native 库解压到 java.io.tmpdir
+#   再 mmap 执行。而 Docker 的 tmpfs 默认带 noexec（/tmp 就是），
+#   直接报 "failed to map segment from shared object"。
+#   compose 里单开了一个带 exec 的 /arthas-tmp 专门给它用。
+#   ★ 这是生产加固容器里装 profiler 会踩到的同一个坑。
 
 # ---------------------------------------------------------------- 生命周期
 
@@ -694,6 +717,350 @@ WARN
 
 # ---------------------------------------------------------------- 入口
 
+# ---------------------------------------------------------------- Arthas
+
+# Arthas 已打进镜像（/opt/arthas），不需要运行时下载。
+# 容器根文件系统是只读的，但 Arthas 要往 $HOME 写日志和会话文件 ——
+# 所以把 HOME 指到 tmpfs 下的 /tmp/arthas-home。
+ARTHAS_HOME_IN_CONTAINER=/tmp/arthas-home
+# ★ 必须显式传 -Duser.home，不能只靠 $HOME 环境变量：
+#   Java 的 user.home 取自 passwd 数据库（这里是 /root），
+#   而容器根文件系统只读 —— 表现为 jad 报
+#   "fail to dump class file ... make sure you have write permission of
+#    /root/logs/arthas/classdump"。只设 HOME= 是不管用的。
+ARTHAS_JAVA_OPTS="-Duser.home=$ARTHAS_HOME_IN_CONTAINER"
+
+container_running() {
+  [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" == "true" ]]
+}
+
+# 用法：
+#   ./lab.sh arthas                      进入交互式控制台
+#   ./lab.sh arthas "trace ...; quit"    跑一批命令后退出
+do_arthas() {
+  if ! container_running; then
+    echo "容器没在跑。先 ./lab.sh start"
+    return 1
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    echo "进入 Arthas 控制台（目标：容器内 PID 1 的 JVM）"
+    echo "  quit  退出控制台（Arthas 服务端继续驻留，下次连得更快）"
+    echo "  stop  连服务端一起关掉"
+    echo
+    docker exec -it "$CONTAINER" sh -c \
+      "mkdir -p $ARTHAS_HOME_IN_CONTAINER; cd /opt/arthas; HOME=$ARTHAS_HOME_IN_CONTAINER exec java $ARTHAS_JAVA_OPTS -jar arthas-boot.jar --arthas-home /opt/arthas 1"
+    return
+  fi
+
+  # 批量模式：把命令**通过 stdin 管道**喂给 arthas 客户端。
+  #
+  # ★ 这里有三个坑，都是实测踩出来的：
+  #
+  #   1. 分号不是分隔符。批处理是**一行一条命令** ——
+  #      写成一行 "version; thread -n 2" 会被当成一个命令名，
+  #      报 `version;: command not found`。所以要先把 ; 换成换行。
+  #
+  #   2. 非 TTY 下 arthas 客户端跑完命令**不会自己退出**，会一直等 stdin。
+  #      用 -f <文件> 或 -c "<命令>" 都一样 —— 实测每次都挂到超时，
+  #      还留下一堆僵尸 JVM 进程（攒了 12 个才发现）。
+  #      用管道就没这个问题：stdin 到 EOF，客户端正常退出（实测 0.5 秒）。
+  #
+  #   3. 还要**逐条喂、留间隔**。一次性把命令全灌进去会丢输出 ——
+  #      实测 3 次里有 1 次 `version` 的结果没打出来：客户端把 stdin 读完后
+  #      就直接退出了，没等命令执行结果刷出来。每条之间留 1 秒就稳了。
+  #
+  #   4. 加 timeout 兜底。attach 偶尔会慢（目标 JVM 正忙的时候）。
+  local batch
+  batch="$(mktemp)"
+  printf '%s\n' "$*" | tr ';' '\n' | sed '/^[[:space:]]*$/d' > "$batch"
+  # 没给退出命令的话补一个，否则会停在提示符等输入
+  if ! grep -qE '^[[:space:]]*(quit|stop)[[:space:]]*$' "$batch"; then
+    echo "quit" >> "$batch"
+  fi
+
+  # 逐条喂命令的子 shell。放成函数是因为管道里没法直接写循环。
+  #
+  # ★ ARTHAS_WAIT：给 trace / watch / stack / monitor 这类**长驻命令**留观察窗口。
+  #   它们的语义是"等目标方法被调用"，命令本身不返回 ——
+  #   如果紧接着就发 quit，等于什么都没看到。
+  #   用法：ARTHAS_WAIT=20 ./lab.sh arthas "trace xxx order"
+  #
+  # ★ 观察窗口结束后必须先发一个单独的 `q` 再发 quit。
+  #   这类长驻命令会**拦截单键输入**（q 用来中止自己），
+  #   直接把 "quit" 发过去的话，开头的 q 会被它吃掉，
+  #   剩下 "uit" 变成一个不存在的命令，客户端就永远退不出去
+  #   （实测卡到 timeout，报 `uit: command not found`）。
+  arthas_feed() {
+    local lines=() cmd
+    while IFS= read -r cmd; do lines+=("$cmd"); done < "$batch"
+    local n=${#lines[@]} i
+    for ((i = 0; i < n; i++)); do
+      cmd="${lines[i]}"
+      if (( i == n - 1 )) && [[ "$cmd" =~ ^[[:space:]]*(quit|stop)[[:space:]]*$ ]]; then
+        if [[ "${ARTHAS_WAIT:-0}" != "0" ]]; then
+          sleep "$ARTHAS_WAIT"
+          printf 'q\n'          # 中止长驻命令，把单键输入模式收回来
+          sleep 1
+        fi
+      fi
+      printf '%s\n' "$cmd"
+      sleep "${ARTHAS_CMD_GAP:-1}"
+    done
+  }
+
+  # 输出不是终端时（管道 / 重定向）把 ANSI 转义码剥掉。
+  # 实测 NO_COLOR=1 和 TERM=dumb 都关不掉 Arthas 的颜色 ——
+  # 不剥的话 `./lab.sh arthas "sc -d X" | grep classLoaderHash` 会匹配不上，
+  # 因为实际内容是 "\033[1mclassLoaderHash\033[0m   28a418fc"。
+  # 这也是终端里看着正常、一进脚本就出错的那类坑。
+  local rc
+  if [[ -t 1 ]]; then
+    timeout "${ARTHAS_TIMEOUT:-120}" docker exec -i "$CONTAINER" sh -c \
+      "mkdir -p $ARTHAS_HOME_IN_CONTAINER; cd /opt/arthas; HOME=$ARTHAS_HOME_IN_CONTAINER exec java $ARTHAS_JAVA_OPTS -jar arthas-boot.jar --arthas-home /opt/arthas 1" < <(arthas_feed)
+    rc=$?
+  else
+    timeout "${ARTHAS_TIMEOUT:-120}" docker exec -i "$CONTAINER" sh -c \
+      "mkdir -p $ARTHAS_HOME_IN_CONTAINER; cd /opt/arthas; HOME=$ARTHAS_HOME_IN_CONTAINER exec java $ARTHAS_JAVA_OPTS -jar arthas-boot.jar --arthas-home /opt/arthas 1" < <(arthas_feed) \
+      | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+    rc=${PIPESTATUS[0]}
+  fi
+  rm -f "$batch"
+  if (( rc == 124 )); then
+    echo
+    echo "⚠ 超时（${ARTHAS_TIMEOUT:-120}s）。目标 JVM 可能正忙，或 Arthas 服务端状态异常。"
+    echo "  重置：./lab.sh arthas-reset"
+  fi
+  return $rc
+}
+
+# Arthas 服务端是**驻留在目标 JVM 里**的，启动参数（比如 user.home）在第一次
+# 启动时就定下来了。如果第一次是用旧参数启动的，后面客户端传什么都改不了 ——
+# 表现为 jad 一直报 /root/logs/arthas 没有写权限。
+# 这个命令用来把服务端整个换掉。
+do_arthas_reset() {
+  if ! container_running; then
+    echo "容器没在跑。"
+    return 1
+  fi
+  docker exec "$CONTAINER" sh -c 'pkill -f arthas-boot 2>/dev/null; true'
+  printf 'stop\n' | timeout 60 docker exec -i "$CONTAINER" sh -c \
+    "cd /opt/arthas; HOME=$ARTHAS_HOME_IN_CONTAINER exec java $ARTHAS_JAVA_OPTS -jar arthas-boot.jar --arthas-home /opt/arthas 1" >/dev/null 2>&1
+  echo "Arthas 服务端已重置（下次调用会用新的启动参数重新 attach）"
+}
+
+# 把三个场景的完整命令序列打出来。照着贴就行 —— 不用记。
+do_arthas_demo() {
+  cat <<'EOF'
+Arthas 演练场 —— 三个场景，靶子是 /demo/* 那几个接口。
+
+Arthas 已经打进镜像（/opt/arthas），不需要下载。先启动：
+
+    ./lab.sh start
+
+────────────────────────────────────────────────────────────
+场景一 · 排错定位：日志不够用，又不能重启加日志
+────────────────────────────────────────────────────────────
+
+先自己打一下这个接口，看总耗时：
+
+    curl -s 'localhost:8081/demo/order?id=1' | python3 -m json.tool
+
+300 多毫秒。但**慢在哪一层**？日志里没有。
+
+    ARTHAS_WAIT=20 ./lab.sh arthas "trace lab.jvm.controller.ArthasDemoController order"
+
+然后在另一个终端反复打接口：
+
+    for i in 1 2 3 4 5; do curl -s -o /dev/null "localhost:8081/demo/order?id=$i"; sleep 3; done
+
+输出会逐层列出每个子调用的耗时和占比。实测 quotePrice 一层吃掉 99.9%。
+
+★ 为什么要有 ARTHAS_WAIT：trace 的语义是"等目标方法被调用"，命令本身
+  不返回。不给观察窗口的话脚本会立刻发 quit，什么都看不到。
+★ 为什么 trace 要配合打接口：它只对**命令生效之后**发生的调用生效。
+
+再看方法的入参出参（同样不用加日志）：
+
+    ARTHAS_WAIT=20 ./lab.sh arthas "watch lab.jvm.controller.ArthasDemoController applyDiscount '{params, returnObj}' -x 2"
+
+────────────────────────────────────────────────────────────
+场景二 · 性能瓶颈：知道慢，不知道是谁在烧 CPU
+────────────────────────────────────────────────────────────
+
+先制造 CPU 热点：
+
+    for i in 1 2 3; do curl -s -o /dev/null 'localhost:8081/demo/format-loop?times=30000'; done
+
+抓火焰图（start 和 stop 是两条独立命令，profiler 在目标 JVM 里后台跑）：
+
+    ./lab.sh arthas "profiler start"
+    curl -s -o /dev/null 'localhost:8081/demo/format-loop?times=30000'
+    ./lab.sh arthas "profiler stop --format html --file /tmp/flame.html"
+
+然后把火焰图拷出来看：
+
+    docker exec -i jvm-lab sh -c 'cat /tmp/flame.html' > flame.html
+
+★ 火焰图上 SimpleDateFormat.<init> 会非常显眼 —— 那是"每次调用都 new"
+  的代价。这个错误在代码 review 时基本看不出来，在火焰图上藏不住。
+
+也可以直接看最忙的线程：
+
+    ./lab.sh arthas "thread -n 3"
+
+────────────────────────────────────────────────────────────
+场景三 · 紧急热更新：改一个字符，但发版要等几小时
+────────────────────────────────────────────────────────────
+
+一键跑完整链路（jad → 改 → mc → retransform → 验证）：
+
+    ./lab.sh arthas-hotfix
+
+它会打印每一步，最后对比改前改后的返回值：90 → 80，**进程没有重启**。
+
+想手工走一遍的话，步骤是：
+
+ ① jad 反编译         ./lab.sh arthas "jad --source-only lab.jvm.controller.ArthasDemoController"
+ ② 改一个字符         applyDiscount 里 '* 9L / 10L' → '* 8L / 10L'
+ ③ 取 classLoaderHash ./lab.sh arthas "sc -d lab.jvm.controller.ArthasDemoController"
+ ④ 送进容器           docker exec -i jvm-lab sh -c 'cat > /tmp/ArthasDemoController.java' < 改好的.java
+ ⑤ 编译               ./lab.sh arthas "mc -c <hash> /tmp/ArthasDemoController.java -d /tmp"
+ ⑥ 生效               ./lab.sh arthas "retransform /tmp/lab/jvm/controller/ArthasDemoController.class"
+ ⑦ 验证               curl -s 'localhost:8081/demo/price?amount=100&vip=true'
+
+手工做的话有三个坑等着你（arthas-hotfix 都替你处理了）：
+
+  ① 文件名必须和 public 类同名。存成 Demo.java 会报
+     "class ArthasDemoController is public, should be declared in a file
+      named ArthasDemoController.java"
+  ② mc 编译时**不带 -parameters**，字节码里没有参数名信息。
+     所以所有 @RequestParam 都写了显式的 name= ——
+     不写的话热更新之后 Spring 解析不了参数，接口直接 500：
+     "Name for argument of type [int] not specified, and parameter name
+      information not available via reflection"
+     ★ 更阴险的是它不一定立刻暴露：Spring 缓存了参数元数据，
+       "热更新前调用过"的接口照常工作，只有"热更新后才第一次调用"的才会炸。
+  ③ 命令行输出带 ANSI 转义码，`| grep classLoaderHash` 匹配不上。
+     lab.sh 在输出不是终端时会自动剥掉。
+
+★ 热更新只在内存里，不落盘 —— ./lab.sh restart 就恢复原样。
+★ 生产上用这个要非常克制：绕过发版流程 = 绕过代码评审和回滚机制。
+
+────────────────────────────────────────────────────────────
+其他常用命令
+────────────────────────────────────────────────────────────
+
+    dashboard                实时面板（线程/内存/GC），类似 top
+    thread -b                只找**死锁**的线程  ← 配合 ./lab.sh trigger deadlock
+    jvm                      当前 JVM 的详细信息
+    heapdump /tmp/a.hprof    堆快照（和 jmap 等价）
+    ognl '@java.lang.System@getProperty("java.version")'   执行任意表达式
+    sc -d <类全名>            看类是从哪个 jar 加载的
+    getstatic                看静态字段的值
+    quit                     退出控制台（Arthas 服务端继续驻留，下次连得更快）
+    stop                     连 Arthas 服务端一起关掉
+
+    不想敲长命令？直接 ./lab.sh arthas 进交互式控制台。
+
+出问题时的自救：
+
+    ./lab.sh arthas-reset    重置 Arthas 服务端。
+      Arthas 的核心是作为 agent **驻留在目标 JVM 里**的，启动参数在第一次
+      启动时就定下来了。如果它是在改配置之前启动的，后面客户端传什么都
+      改不了（比如 jad 一直报 /root/logs/arthas 没写权限）。
+
+EOF
+}
+
+# 热更新一键演示：jad → 改 → mc → retransform → 验证，全程不重启。
+#
+# 为什么要做成命令：这条链路有 7 个步骤、3 个隐藏的坑
+# （文件名必须和 public 类同名、mc 要 classLoaderHash、ANSI 转义），
+# 手工敲一遍很容易卡住。命令跑通之后，再回头看 arthas-demo 里的分步说明，
+# 每一步在干什么就清楚了。
+do_arthas_hotfix() {
+  if ! container_running; then
+    echo "容器没在跑。先 ./lab.sh start"
+    return 1
+  fi
+
+  local cls=lab.jvm.controller.ArthasDemoController
+  local work
+  work="$(mktemp -d)"
+  # ★ 文件名必须和 public 类同名，否则 mc 报
+  #   "class X is public, should be declared in a file named X.java"
+  local src="$work/ArthasDemoController.java"
+
+  echo "① 改之前："
+  curl -s --max-time 20 "$LAB_URL/demo/price?amount=100&vip=true" \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print("   payable =",d["payable"],"  (",d["discountRule"],")")' 2>/dev/null \
+    || { echo "   拿不到响应，先 ./lab.sh start"; rm -rf "$work"; return 1; }
+
+  echo "② jad 反编译出当前源码"
+  # 掐掉 Arthas 的控制台噪声：从 "jad --source-only" 那行之后，到下一个提示符之前
+  ./lab.sh arthas "jad --source-only $cls" 2>&1 \
+    | awk '/jad --source-only/{f=1;next} /^\[arthas@/{f=0} f' \
+    | sed '/^[[:space:]]*$/d' > "$src"
+  if ! grep -q 'applyDiscount' "$src"; then
+    echo "   反编译失败，内容不对。先 ./lab.sh arthas-reset 再试"
+    rm -rf "$work"; return 1
+  fi
+  echo "   拿到 $(wc -l < "$src") 行源码"
+
+  echo "③ 改一个字符：VIP 9 折 → 8 折"
+  if ! grep -q 'amount \* 9L / 10L' "$src"; then
+    echo "   没找到目标行（可能已经被热更新过了）。./lab.sh restart 恢复原状再试"
+    rm -rf "$work"; return 1
+  fi
+  sed -i 's/amount \* 9L \/ 10L/amount * 8L \/ 10L/' "$src"
+
+  echo "④ 取 ClassLoader hash"
+  local hash
+  hash="$(./lab.sh arthas "sc -d $cls" 2>&1 \
+          | grep -oE 'classLoaderHash[[:space:]]+[0-9a-f]+' | awk '{print $2}' | head -1)"
+  if [[ -z "$hash" ]]; then
+    echo "   取不到 hash。先 ./lab.sh arthas-reset 再试"
+    rm -rf "$work"; return 1
+  fi
+  echo "   classLoaderHash = $hash"
+
+  echo "⑤ 把源码送进容器（根文件系统只读，docker cp 用不了，走 stdin）"
+  docker exec -i "$CONTAINER" sh -c "cat > /tmp/ArthasDemoController.java" < "$src"
+
+  echo "⑥ mc 编译"
+  local mc_out
+  mc_out="$(./lab.sh arthas "mc -c $hash /tmp/ArthasDemoController.java -d /tmp" 2>&1)"
+  if ! grep -q 'Memory compiler output' <<<"$mc_out"; then
+    echo "$mc_out" | grep -iE 'error|message' | head -4 | sed 's/^/   /'
+    rm -rf "$work"; return 1
+  fi
+  echo "   编译成功"
+
+  echo "⑦ retransform 让新字节码生效"
+  local rt_out
+  rt_out="$(./lab.sh arthas "retransform /tmp/lab/jvm/controller/ArthasDemoController.class" 2>&1)"
+  if ! grep -q 'retransform success' <<<"$rt_out"; then
+    echo "$rt_out" | tail -4 | sed 's/^/   /'
+    rm -rf "$work"; return 1
+  fi
+  echo "   已生效"
+
+  echo "⑧ 改之后（注意：进程没有重启）"
+  curl -s --max-time 20 "$LAB_URL/demo/price?amount=100&vip=true" \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print("   payable =",d["payable"],"  (",d["discountRule"],")")'
+
+  rm -rf "$work"
+  cat <<'EOF'
+
+   对照一下：90 → 80，说明新代码已经在跑着的 JVM 里生效了。
+   ★ 这个改动只在内存里，不落盘 —— ./lab.sh restart 就恢复原样。
+   ★ 生产上用热更新要非常克制：绕过发版流程 = 绕过代码评审和回滚机制。
+EOF
+}
+
+# ---------------------------------------------------------------- 主入口
+
 case "${1:-help}" in
   start)      shift; do_start "${1:-default}" ;;
   stop)       do_stop ;;
@@ -707,11 +1074,15 @@ case "${1:-help}" in
   dump-heap)  shift; do_dump_heap "${1:-manual}" ;;
   dump-thread) shift; do_dump_thread "${1:-1}" "${2:-5}" ;;
   trigger)    shift; do_trigger "${1:-help}" ;;
+  arthas)     shift; do_arthas "$@" ;;
+  arthas-demo) do_arthas_demo ;;
+  arthas-hotfix) do_arthas_hotfix ;;
+  arthas-reset) do_arthas_reset ;;
   diagnose)   do_diagnose ;;
   clean)      do_clean ;;
   profiles)   list_profiles ;;
   host-start) shift; do_host_start "${1:-default}" ;;
   help|*)
-    sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,34p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac

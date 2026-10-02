@@ -909,6 +909,117 @@ jcmd 1 Thread.print | grep -A 20 "nid=0x<hex>"
 
 ---
 
+## 3. Arthas：线上排错、性能定位、热更新
+
+前面所有场景都是"**制造**问题"，Arthas 是"**在没有现场的情况下把问题挖出来**"。
+
+它解决的是一个很具体的困境：**线上出问题了，但日志不够用，而你又不能重启加日志。**
+Arthas 直接挂到运行中的 JVM 上，看方法调用、耗时、入参出参，甚至改代码 —— 都不用重启。
+
+已打进镜像（`/opt/arthas`，4.3.5），不需要联网下载。
+
+```bash
+./lab.sh arthas-demo      # 打印三个场景的完整步骤（照着贴就行）
+./lab.sh arthas           # 进交互式控制台
+./lab.sh arthas "命令"    # 跑一批命令后退出
+./lab.sh arthas-hotfix    # 一键跑完整热更新链路
+./lab.sh arthas-reset     # 重置 Arthas 服务端（见下方"驻留"那条）
+```
+
+靶子是 `/demo/*` 那几个接口，里面**故意埋了四处问题**。
+
+### 3.1 排错定位 —— 慢在哪一层？
+
+```bash
+curl -s 'localhost:8081/demo/order?id=1'    # 总耗时 300ms
+```
+
+300ms 是慢，但**慢在哪一层**？日志里没有。用 `trace`：
+
+```bash
+ARTHAS_WAIT=20 ./lab.sh arthas "trace lab.jvm.controller.ArthasDemoController order"
+# 另一个终端反复打接口
+for i in 1 2 3 4 5; do curl -s -o /dev/null "localhost:8081/demo/order?id=$i"; sleep 3; done
+```
+
+实测输出：
+
+```
+`---[300.984231ms] ArthasDemoController:order()
+    +---[0.01% 0.033841ms ] validate()          #78
+    +---[99.76% 300.270299ms ] quotePrice()     #79   ← 就是它
+    +---[0.01% 0.01888ms ] checkInventory()     #80
+    +---[0.01% 0.033921ms ] applyDiscount()     #81
+    `---[0.09% 0.272325ms ] formatStamp()       #82
+```
+
+**不用改一行代码、不用重启，直接看到时间花在哪个方法上。**
+
+看入参出参同样不用加日志：
+
+```bash
+ARTHAS_WAIT=20 ./lab.sh arthas "watch lab.jvm.controller.ArthasDemoController applyDiscount '{params, returnObj}' -x 2"
+```
+
+> **为什么要 `ARTHAS_WAIT`**：`trace` 的语义是"等目标方法被调用"，命令本身
+> 不返回。不给观察窗口的话脚本会立刻发 `quit`，等于什么都没看到。
+> 而且它只对**命令生效之后**发生的调用生效 —— 所以要配合打接口。
+
+### 3.2 性能瓶颈 —— 谁在烧 CPU
+
+```bash
+for i in 1 2 3; do curl -s -o /dev/null 'localhost:8081/demo/format-loop?times=30000'; done
+./lab.sh arthas "profiler start"
+curl -s -o /dev/null 'localhost:8081/demo/format-loop?times=30000'
+./lab.sh arthas "profiler stop --format html --file /tmp/flame.html"
+docker exec -i jvm-lab sh -c 'cat /tmp/flame.html' > flame.html
+```
+
+火焰图上 `SimpleDateFormat.<init>` 会非常显眼 —— 那是"每次调用都 new 一个"的代价。
+这个错误在代码 review 时基本看不出来，在火焰图上藏不住。
+
+看最忙的线程：`./lab.sh arthas "thread -n 3"`；只找死锁：`thread -b`。
+
+### 3.3 紧急热更新 —— 改一个字符，但发版要等几小时
+
+```bash
+./lab.sh arthas-hotfix
+```
+
+一键跑完 `jad → 改 → mc → retransform → 验证`，实测返回值 **90 → 80**，**进程没有重启**。
+
+想手工走一遍（`arthas-hotfix` 里的每一步）：
+
+| 步骤 | 命令 |
+|---|---|
+| ① 反编译 | `./lab.sh arthas "jad --source-only lab.jvm.controller.ArthasDemoController"` |
+| ② 改一个字符 | `applyDiscount` 里 `* 9L / 10L` → `* 8L / 10L` |
+| ③ 取 ClassLoader hash | `./lab.sh arthas "sc -d lab.jvm.controller.ArthasDemoController"` |
+| ④ 送进容器 | `docker exec -i jvm-lab sh -c 'cat > /tmp/ArthasDemoController.java' < 改好的.java` |
+| ⑤ 编译 | `./lab.sh arthas "mc -c <hash> /tmp/ArthasDemoController.java -d /tmp"` |
+| ⑥ 生效 | `./lab.sh arthas "retransform /tmp/lab/jvm/controller/ArthasDemoController.class"` |
+| ⑦ 验证 | `curl -s 'localhost:8081/demo/price?amount=100&vip=true'` |
+
+> **改动只在内存里，不落盘** —— `./lab.sh restart` 就恢复原样。
+> 生产上用这个要非常克制：**绕过发版流程 = 绕过代码评审和回滚机制**。
+
+### 3.4 ★ 踩过的坑（每一条都是实测出来的）
+
+这些坑的共同点是：**现象和根因隔得很远，不看注释根本猜不到**。
+
+| 坑 | 现象 | 根因 |
+|---|---|---|
+| **`user.home` 是目标 JVM 的** | `jad` 报 `/root/logs/arthas/classdump` 没有写权限，但给客户端传 `-Duser.home` 完全没用 | Arthas 核心是作为 **agent 跑在目标 JVM 里**的，classdump 路径在那里解析。必须给**目标 JVM** 加 `-Duser.home=/tmp` |
+| **Arthas 服务端会驻留** | 改了启动参数却一直不生效 | agent 一旦 attach 就常驻，参数第一次就定死了。要 `./lab.sh arthas-reset` 换掉 |
+| **tmpfs 默认 `noexec`** | `profiler start` 报 `failed to map segment from shared object` | Docker 给 tmpfs 默认加 `noexec`，而 async-profiler 是 native 库需要 `mmap` 成可执行段。本 lab 单开了带 `exec` 的 `/arthas-tmp` |
+| **`mc` 不带 `-parameters`** | 热更新后接口 500：`Name for argument of type [int] not specified` | `mc` 编译时没有 `-parameters`，字节码里没有参数名，Spring 解析不了。**更阴险的是它不一定立刻暴露** —— Spring 缓存了参数元数据，"热更新前调用过"的接口照常工作，只有"热更新后才第一次调用"的才会炸 |
+| **`mc` 要求文件名 = 类名** | `class X is public, should be declared in a file named X.java` | Java 语言规定。源码存成 `Demo.java` 就是不行 |
+| **输出带 ANSI 转义码** | `\| grep classLoaderHash` 匹配不上，终端里看着却正常 | 实际内容是 `\033[1mclassLoaderHash\033[0m`。`NO_COLOR=1` 和 `TERM=dumb` 都关不掉，只能在输出不是终端时自己剥 |
+| **长驻命令拦截单键** | 发 `quit` 后卡死，报 `uit: command not found` | `trace`/`watch` 这类命令会拦截单键输入（`q` 用来中止自己），把 `quit` 开头的 `q` 吃掉了。必须先发一个单独的 `q` 再发 `quit` |
+| **非 TTY 下客户端不退出** | 用 `-f <文件>` 或 `-c "<命令>"` 每次都挂到超时，还留下一堆僵尸 JVM | 非 TTY 时 arthas 客户端跑完命令不会自己退。改用 stdin 管道，且**逐条喂、留间隔** —— 一次性灌进去会丢输出（实测 3 次里 1 次丢） |
+
+---
+
 ## 4. 参数实验：换 GC 看差异
 
 ```bash

@@ -281,6 +281,27 @@
   }
   .codetip .tipnote b { color: var(--red); font-weight: 600; }
 
+  /* ── Arthas 面板 ── */
+  .arthasgrid {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  @media (max-width: 900px) { .arthasgrid { grid-template-columns: 1fr; } }
+  .acard {
+    display: flex; flex-direction: column;
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 11px 12px;
+  }
+  .acard h3 { margin: 0 0 6px; font-size: 13px; color: var(--text-strong); }
+  .acard p { margin: 0 0 8px; font-size: 12px; color: var(--dim); }
+  .acard pre {
+    margin: 0 0 8px; padding: 6px 8px; border-radius: 5px;
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    font-size: 11.5px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .acard .ahint { font-size: 11.5px; color: var(--dim); line-height: 1.6; }
+  .acard .ahint b { color: var(--text-strong); }
+
   /* 尊重「减少动态效果」的系统设置 */
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
@@ -453,6 +474,50 @@
       它们正被 JVM 的 <code>-Xlog</code> 和 logback 持有，删了的话写入方会继续往那个
       「已经看不见的 inode」里写，空间不释放、面板永远空着。其余文件直接删除。
       怎么判断"被持有"是扫 <code>/proc/self/fd</code>，不是维护一份白名单。
+    </div>
+  </section>
+
+  <!-- ── Arthas ── -->
+  <section class="panel">
+    <h2>Arthas 线上排错 <span class="hint" style="margin:0;font-weight:400">（靶子在 /demo/*）</span></h2>
+    <p class="hint" style="margin:0 0 10px">
+      Arthas 已打进镜像（<code>/opt/arthas</code>），不需要下载。
+      <b>它解决的是"日志不够用、又不能重启加日志"这个问题</b> ——
+      直接看运行中 JVM 的方法调用、耗时、入参出参，还能改线上代码。
+      靶子 <code>/demo/order</code> 里埋了四处问题，下面是挖出来的方法。
+    </p>
+    <div class="arthasgrid">
+      <div class="acard">
+        <h3>① 排错定位</h3>
+        <p>总耗时 300ms，但慢在哪一层？日志里没有。</p>
+        <pre>./lab.sh arthas-demo</pre>
+        <div class="ahint">用 <b>trace</b> 看逐层耗时 —— 实测 quotePrice 一层吃掉 <b>99.9%</b>。<br>
+          用 <b>watch</b> 看方法入参出参，不用加一行日志、不用重启。</div>
+      </div>
+      <div class="acard">
+        <h3>② 性能瓶颈</h3>
+        <p>知道慢，但不知道是谁在烧 CPU。</p>
+        <pre>./lab.sh arthas "profiler start"</pre>
+        <div class="ahint">火焰图上 <code>SimpleDateFormat.&lt;init&gt;</code> 会非常显眼 ——
+          那是"每次调用都 new 一个"的代价。代码 review 时看不出来，火焰图上藏不住。</div>
+      </div>
+      <div class="acard">
+        <h3>③ 紧急热更新</h3>
+        <p>改一个字符，但走发版流程要等几小时。</p>
+        <pre>./lab.sh arthas-hotfix</pre>
+        <div class="ahint">jad → 改 → mc → retransform，<b>不重启</b>让新代码生效。<br>
+          实测 VIP 折扣 90 → 80。改动只在内存里，<code>restart</code> 即还原。</div>
+      </div>
+    </div>
+    <div class="hint" style="margin-top:12px">
+      进交互式控制台：<code>./lab.sh arthas</code>　　完整步骤：<code>./lab.sh arthas-demo</code>　　
+      出问题重置：<code>./lab.sh arthas-reset</code><br>
+      <b>两个容器加固带来的坑（都已在 lab 里绕开，但值得知道）</b>：<br>
+      · Arthas 的 agent <b>驻留在目标 JVM 里</b>，启动参数第一次就定死了 ——
+        改了配置要 <code>arthas-reset</code> 才能生效<br>
+      · Docker 的 tmpfs 默认带 <code>noexec</code>，async-profiler 是 native 库需要
+        <code>mmap</code> 成可执行段，会报 <code>failed to map segment from shared object</code>。
+        本 lab 单开了一个带 <code>exec</code> 的 <code>/arthas-tmp</code> 给它用
     </div>
   </section>
 

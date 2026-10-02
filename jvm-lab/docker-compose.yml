@@ -68,7 +68,19 @@ services:
     # 根文件系统只读；只放开 /tmp（JVM 和 Tomcat 需要临时目录）
     read_only: true
     tmpfs:
+      # ★ Docker 给 tmpfs 默认加了 noexec（加固的一部分），实测 mount 输出是
+      #     tmpfs on /tmp type tmpfs (rw,nosuid,nodev,noexec,...)
+      #   后果是 Arthas 的 profiler 起不来：
+      #     AsyncProfiler error: /tmp/ArthasJniLibrary*.tmp:
+      #       failed to map segment from shared object
+      #   因为 async-profiler 是个 native 库，需要被 mmap 成可执行段，
+      #   而 noexec 直接拦掉。这不是 Arthas 的 bug，是容器加固的正常结果 ——
+      #   在真实的生产加固容器里装 profiler 会踩到一模一样的坑。
+      #
+      #   所以 /tmp 保持 noexec（继续享受加固），另开一个带 exec 的小盘，
+      #   通过 -Djava.io.tmpdir 指过去，只给 profiler 用。
       - /tmp:size=64m,mode=1777
+      - /arthas-tmp:size=128m,mode=1777,exec
 
     # ---- 防线 4（磁盘）：容器日志轮转 ----
     logging:
